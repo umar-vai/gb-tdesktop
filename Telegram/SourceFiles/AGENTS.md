@@ -176,6 +176,10 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 - Paths: `SourceFiles/window/`, `SourceFiles/mainwidget*`, `SourceFiles/mainwindow*`, `SourceFiles/boxes/abstract_box*`, `SourceFiles/dialogs/ui/restore_windows_offer*`, `SourceFiles/ui/controls/window_*`, `SourceFiles/ui/controls/title_sub_widget*`
 - OS windows and their controllers, each controller's own `Columns` with `Core::Settings` as the main role window's persisted copy, `SessionController` showing chats, sections, layers and boxes, section mementos and slide animations, the main menu, folders sidebar, saved windows, chat switching and previews, the connecting widget and lock screens. It must not own chat action menus or notifications.
 
+### gb — GB fork additions (not upstream Telegram)
+- Paths: `SourceFiles/gb/`
+- Everything the GB fork adds on top of Telegram Desktop: the GB main sections (Home = downloader, Feed, Transfers) as `Window::SectionWidget` pages, their entries in the left sidebar, and GB's user-facing strings (`gb_strings.h`, kept out of `lang.strings` during development to avoid full rebuilds). Upstream files only get small, `// GB:`-marked hooks that call into here (sidebar in `window_filters_menu.cpp`, always-on sidebar in `window_session_controller.cpp`, start-on-Home in `window_controller.cpp`). It must not reimplement Telegram features; project plan and decisions are in the repository-root `CLAUDE.md` and `docs/ARCHITECTURE.md`.
+
 ### notifications — notification system
 - Paths: `SourceFiles/window/notifications_*`
 - Scheduling and grouping notifications, the `Manager` and `NativeManager` interface that `platform` backends implement, and the custom-drawn default popups. It must not own the per-OS backends.

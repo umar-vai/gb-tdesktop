@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/promo_suggestions.h"
 #include "data/data_thread.h"
 #include "export/export_manager.h"
+#include "gb/gb_section.h"
 #include "intro/intro_widget.h"
 #include "lang/lang_hardcoded.h"
 #include "lang/lang_keys.h"
@@ -256,13 +257,21 @@ void Controller::setupSideBar() {
 		sideBarChanged();
 	}, _sessionController->lifetime());
 
-	if (_sessionController->session().settings().dialogsFiltersEnabled()
-		&& _sessionController->enoughSpaceForFilters()
-		&& !Core::App().settings().chatFiltersHorizontal()) {
+	// GB: the sidebar holds the GB sections, so show it whenever it fits
+	// (not only when the user has chat folders).
+	if (_sessionController->enoughSpaceForFilters()) {
 		_sessionController->toggleFiltersMenu(true);
 	} else {
 		sideBarChanged();
 	}
+
+	// GB: start on Home (the downloader), not on the chat list.
+	const auto controller = _sessionController.get();
+	crl::on_main(controller, [=] {
+		controller->showSection(
+			std::make_shared<GB::SectionMemento>(GB::Section::Home),
+			Window::SectionShow(anim::type::instant));
+	});
 }
 
 void Controller::checkLockByTerms() {

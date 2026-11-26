@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_unread_value.h"
 #include "data/data_user.h"
+#include "gb/gb_sidebar.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
@@ -128,6 +129,9 @@ void FiltersMenu::setup() {
 	_outer.setAttribute(Qt::WA_OpaquePaintEvent);
 	_outer.show();
 
+	// GB: fixed section entries between the main menu and the folders list.
+	_gbSections = GB::SetupSidebarSections(&_outer, _session, buttonStyle());
+
 	// Keep the sidebar's Tab chain in visual order: the main menu button
 	// above the scroll area, and inside it the folders list (entered at
 	// its roving Tab-stop), the favorite link and the edit button - even
@@ -148,8 +152,11 @@ void FiltersMenu::setup() {
 		_outer.setGeometry({ 0, 0, width, height });
 		_menu.resizeToWidth(width);
 		_menu.move(0, 0);
+		_gbSections->resizeToWidth(width);
+		_gbSections->move(0, _menu.height());
+		const auto scrollTop = _menu.height() + _gbSections->height();
 		_scroll.setGeometry(
-			{ 0, _menu.height(), width, height - _menu.height() });
+			{ 0, scrollTop, width, std::max(height - scrollTop, 0) });
 		_container->resizeToWidth(width);
 		_container->move(0, 0);
 	}, _outer.lifetime());

@@ -1038,6 +1038,23 @@ PRIVATE
     export/view/export_view_settings.h
     export/view/export_view_top_bar.cpp
     export/view/export_view_top_bar.h
+    gb/downloader/gb_dl_boxes.cpp
+    gb/downloader/gb_dl_boxes.h
+    gb/downloader/gb_dl_common.cpp
+    gb/downloader/gb_dl_common.h
+    gb/downloader/gb_dl_manager.cpp
+    gb/downloader/gb_dl_manager.h
+    gb/downloader/gb_dl_settings.cpp
+    gb/downloader/gb_dl_settings.h
+    gb/downloader/gb_dl_tasks.cpp
+    gb/downloader/gb_dl_tasks.h
+    gb/downloader/gb_dl_widget.cpp
+    gb/downloader/gb_dl_widget.h
+    gb/gb_section.cpp
+    gb/gb_section.h
+    gb/gb_sidebar.cpp
+    gb/gb_sidebar.h
+    gb/gb_strings.h
     history/admin_log/history_admin_log_filter.cpp
     history/admin_log/history_admin_log_filter.h
     history/admin_log/history_admin_log_inner.cpp

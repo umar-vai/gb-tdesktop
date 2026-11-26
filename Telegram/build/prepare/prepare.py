@@ -1626,9 +1626,9 @@ qtAngleCmake = os.path.realpath(os.path.join(
 modifiedEnv['QT_ANGLE_CMAKE'] = qtAngleCmake
 branch = 'v$QT' + ('-lts-lgpl' if qt.startswith('6.2.') else '')
 stage('qt_' + qt, """
-    git clone -b """ + branch + """ https://github.com/qt/qt5.git qt_$QT
+    git clone --depth 1 -b """ + branch + """ https://github.com/qt/qt5.git qt_$QT
     cd qt_$QT
-    git submodule update --init --recursive --progress qtbase qtimageformats qtshadertools qtsvg
+    git submodule update --init --recursive --depth 1 --progress qtbase qtimageformats qtshadertools qtsvg
 depends:patches/qtbase_""" + qt + """/*.patch
 depends:patches/qtsvg_""" + qt + """/*.patch
 win32_win64:
