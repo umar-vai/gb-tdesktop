@@ -148,6 +148,7 @@ private:
 	void processFinished(int exitCode);
 	void handleLine(const QString &line);
 	void handleProgress(const QStringList &parts);
+	void handlePlan(const QString &text);
 	void reportProgress(float64 speed, int64 eta);
 	[[nodiscard]] QStringList commonArgs() const;
 	[[nodiscard]] QString formatSelector() const;
@@ -175,6 +176,7 @@ private:
 	std::map<QString, Stream> _streams;
 	std::vector<QString> _streamOrder;
 	int _expectedStreams = 1;
+	std::vector<std::pair<QString, int64>> _plan;
 	float64 _best = 0.;
 	bool _stopping = false;
 	bool _keepPartial = false;

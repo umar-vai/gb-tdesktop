@@ -980,6 +980,12 @@ QStringList YtDlpTask::commonArgs() const {
 		_settings.fastMode ? u"16"_q : u"8"_q,
 		u"--buffer-size"_q,
 		u"256K"_q,
+		// yt-dlp otherwise grows each read up to 4 MB and reports progress
+		// only after a whole read, so on a slow line the bar froze for many
+		// seconds. Fixed 256 KB reads, and at most ~4 progress lines a second.
+		u"--no-resize-buffer"_q,
+		u"--progress-delta"_q,
+		u"0.25"_q,
 		u"--no-overwrites"_q,
 		u"--continue"_q,
 		u"--output"_q,
@@ -998,7 +1004,10 @@ QStringList YtDlpTask::commonArgs() const {
 		u"--progress-template"_q,
 		u"postprocess:GBPP %(progress.status)s|%(progress.postprocessor)s"_q,
 		u"--print"_q,
-		u"before_dl:GBFMT %(format_id)s"_q,
+		u"before_dl:GBPLAN %(requested_formats.:.format_id)j|"
+		"%(requested_formats.:.filesize)j|"
+		"%(requested_formats.:.filesize_approx)j|"
+		"%(format_id)s|%(filesize,filesize_approx)s"_q,
 		u"--print"_q,
 		u"after_move:GBFILE %(filepath)s"_q,
 	};
@@ -1006,10 +1015,13 @@ QStringList YtDlpTask::commonArgs() const {
 		result << u"--ffmpeg-location"_q << _ffmpeg;
 	}
 	const auto audio = (_request.mode == Mode::Audio);
-	if (_settings.embedMetadata) {
+	// Without ffmpeg nothing can be merged, converted or embedded: yt-dlp
+	// would leave separate video/audio files and the download would fail.
+	const auto ffmpeg = !_ffmpeg.isEmpty();
+	if (ffmpeg && _settings.embedMetadata) {
 		result << u"--embed-metadata"_q;
 	}
-	if (_settings.embedThumbnail) {
+	if (ffmpeg && _settings.embedThumbnail) {
 		result << u"--embed-thumbnail"_q
 			<< u"--convert-thumbnails"_q
 			<< u"jpg"_q;
@@ -1028,11 +1040,20 @@ QStringList YtDlpTask::commonArgs() const {
 			<< (langs.isEmpty() ? u"en"_q : langs.join(','))
 			<< u"--sub-format"_q
 			<< u"srt/vtt/best"_q;
-		if (_settings.subtitles == Subtitles::Embed) {
+		if (ffmpeg && _settings.subtitles == Subtitles::Embed) {
 			result << u"--embed-subs"_q;
 		}
 	}
-	if (audio) {
+	if (audio && !ffmpeg) {
+		result << u"--format"_q
+			<< u"bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best"_q;
+	} else if (!audio && !ffmpeg) {
+		const auto height = QString(_request.quality).remove('p').toInt();
+		result << u"--format"_q
+			<< ((height > 0)
+				? u"b[height<=%1][ext=mp4]/b[height<=%1]/b"_q.arg(height)
+				: u"b[ext=mp4]/b"_q);
+	} else if (audio) {
 		result << u"--format"_q
 			<< u"bestaudio/best"_q
 			<< u"--extract-audio"_q
@@ -1071,6 +1092,7 @@ void YtDlpTask::runAttempt() {
 	_streams.clear();
 	_streamOrder.clear();
 	_expectedStreams = 1;
+	_plan.clear();
 	_attemptErrors.clear();
 	_produced.clear();
 	_buffer.clear();
@@ -1090,11 +1112,16 @@ void YtDlpTask::runAttempt() {
 			return;
 		}
 		_buffer += QString::fromUtf8(process->readAllStandardOutput());
-		auto newline = _buffer.indexOf('\n');
+		// A line may end with '\r' (console-style progress) or '\n'.
+		static const auto separator = QRegularExpression(u"[\r\n]"_q);
+		auto newline = _buffer.indexOf(separator);
 		while (newline >= 0) {
 			handleLine(_buffer.left(newline).trimmed());
 			_buffer.remove(0, newline + 1);
-			newline = _buffer.indexOf('\n');
+			newline = _buffer.indexOf(separator);
+		}
+		if (_buffer.size() > 1024 * 1024) {
+			_buffer.clear();
 		}
 	});
 	QObject::connect(process, &QProcess::readyReadStandardError, [=] {
@@ -1143,8 +1170,46 @@ void YtDlpTask::runAttempt() {
 	process->start(_ytDlp, args);
 }
 
-void YtDlpTask::handleLine(const QString &line) {
-	if (line.startsWith(u"GBPROG "_q)) {
+void YtDlpTask::handlePlan(const QString &text) {
+	// "["401","140"]|[335600758,13192871]|[...approx...]|401+140|348793629"
+	// For a single format the lists are "NA" and the last two fields count.
+	const auto parts = text.split('|');
+	const auto list = [&](int index) {
+		return QJsonDocument::fromJson(parts.value(index).toUtf8()).array();
+	};
+	const auto ids = list(0);
+	const auto exact = list(1);
+	const auto approx = list(2);
+	const auto size = [](const QJsonValue &value) {
+		return value.isDouble() ? int64(value.toDouble()) : int64(0);
+	};
+	_plan.clear();
+	if (!ids.isEmpty()) {
+		for (auto i = 0; i != ids.size(); ++i) {
+			const auto bytes = size(exact.at(i));
+			_plan.push_back({
+				ids.at(i).toString(),
+				bytes ? bytes : size(approx.at(i)),
+			});
+		}
+	} else {
+		auto ok = false;
+		const auto bytes = parts.value(4).trimmed().toLongLong(&ok);
+		_plan.push_back({ parts.value(3).trimmed(), ok ? bytes : 0 });
+	}
+	_expectedStreams = std::max(1, int(_plan.size()));
+}
+
+void YtDlpTask::handleLine(const QString &original) {
+	auto line = original;
+	// With several parallel progress lines yt-dlp prefixes "1: ", "2: ".
+	static const auto numbered = QRegularExpression(u"^\\d+: (GB[A-Z]+ )"_q);
+	if (const auto match = numbered.match(line); match.hasMatch()) {
+		line = line.mid(match.capturedStart(1));
+	}
+	if (line.startsWith(u"GBPLAN "_q)) {
+		handlePlan(line.mid(7));
+	} else if (line.startsWith(u"GBPROG "_q)) {
 		handleProgress(line.mid(7).split('|'));
 	} else if (line.startsWith(u"GBPP "_q)) {
 		const auto parts = line.mid(5).split('|');
@@ -1165,11 +1230,7 @@ void YtDlpTask::handleLine(const QString &line) {
 		}
 	} else if (line.startsWith(u"GBFILE "_q)) {
 		_produced = line.mid(7).trimmed();
-	} else if (line.startsWith(u"GBFMT "_q)) {
-		_expectedStreams = std::max(
-			1,
-			int(line.mid(6).trimmed().split('+').size()));
-	} else if (line.startsWith(u"[info]"_q)) {
+	} else if (line.startsWith(u"[info]"_q) && _plan.empty()) {
 		static const auto re = QRegularExpression(
 			u"Downloading \\d+ format\\(s\\):\\s*(\\S+)"_q);
 		const auto match = re.match(line);
@@ -1246,26 +1307,55 @@ void YtDlpTask::handleProgress(const QStringList &parts) {
 
 void YtDlpTask::reportProgress(float64 speed, int64 eta) {
 	const auto count = std::max(_expectedStreams, int(_streams.size()));
-	auto weightTotal = int64(0);
-	auto allKnown = true;
-	for (const auto &[key, stream] : _streams) {
-		weightTotal += stream.total;
-		allKnown = allKnown && (stream.total > 0) && !stream.estimated;
+
+	// The weights are fixed once, from the sizes yt-dlp planned before the
+	// download (GBPLAN). Switching weights mid-way made a 4K video (335 MB
+	// video + 13 MB audio) crawl at half speed and then jump to 98%.
+	auto planTotal = int64(0);
+	auto planKnown = !_plan.empty() && (int(_plan.size()) >= count);
+	for (const auto &[id, bytes] : _plan) {
+		planTotal += bytes;
+		planKnown = planKnown && (bytes > 0);
 	}
-	allKnown = allKnown && (int(_streams.size()) >= count);
+	const auto planned = [&](const QString &key) -> int64 {
+		for (const auto &[id, bytes] : _plan) {
+			if (id == key) {
+				return bytes;
+			}
+		}
+		return 0;
+	};
+	if (planKnown) {
+		for (const auto &[key, stream] : _streams) {
+			if (!planned(key)) {
+				planKnown = false; // A stream we did not plan for.
+				break;
+			}
+		}
+	}
+
 	auto value = 0.;
 	auto doneAll = int64(0);
+	auto knownAll = int64(0);
 	auto estimate = false;
 	for (const auto &[key, stream] : _streams) {
-		const auto weight = (allKnown && weightTotal)
-			? (float64(stream.total) / weightTotal)
+		const auto weight = planKnown
+			? (float64(planned(key)) / planTotal)
 			: (1. / count);
 		value += (stream.finished ? 1. : stream.fraction) * weight;
 		doneAll += (stream.finished && stream.total)
 			? stream.total
 			: stream.downloaded;
+		knownAll += stream.total ? stream.total : planned(key);
 		estimate = estimate || (stream.estimated && !stream.finished);
 	}
+	// Size of the streams that have not started yet.
+	for (const auto &[id, bytes] : _plan) {
+		if (!_streams.contains(id)) {
+			knownAll += bytes;
+		}
+	}
+	const auto weightTotal = std::max(knownAll, planTotal);
 	value = std::min(value, 0.985);
 	_best = std::max(_best, value);
 	auto metrics = Metrics{
@@ -1273,7 +1363,8 @@ void YtDlpTask::reportProgress(float64 speed, int64 eta) {
 		.total = weightTotal,
 		.speed = speed,
 		.eta = eta,
-		.estimate = estimate || (int(_streams.size()) < count),
+		.estimate = estimate
+			|| (!planKnown && (int(_streams.size()) < count)),
 	};
 	if (speed > 0. && weightTotal > doneAll) {
 		metrics.eta = int64((weightTotal - doneAll) / speed);
