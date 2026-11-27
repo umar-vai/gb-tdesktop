@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_authorizations.h"
 #include "gb/updates/gb_updates.h" // GB: own updater
+#include "gb/gb_left_panel.h" // GB: panels in the left column
 #include "api/api_chat_filters.h"
 #include "apiwrap.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -500,6 +501,10 @@ Widget::Widget(
 	GB::Updates::ReadyValue() | rpl::on_next([=] {
 		checkUpdateStatus();
 	}, lifetime());
+	// GB: the sidebar can cover the chat list with a GB panel.
+	if (_layout == Layout::Main && controller->window().isPrimary()) {
+		GB::SetupLeftPanel(this, controller);
+	}
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });

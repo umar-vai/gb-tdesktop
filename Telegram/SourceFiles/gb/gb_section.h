@@ -40,6 +40,23 @@ enum class Section : uchar {
 // Which GB section is currently shown in the main column (None = chats).
 [[nodiscard]] rpl::producer<Section> ShownSectionValue();
 
+// What the left column (Telegram's chat list place) shows. The sidebar
+// buttons switch it; the main column keeps showing the Feed (or a chat).
+enum class Panel : uchar {
+	Chats,
+	Home,
+	Feed,
+	Transfers,
+};
+
+[[nodiscard]] Panel CurrentPanel();
+[[nodiscard]] rpl::producer<Panel> PanelValue();
+void ShowPanel(Panel panel);
+
+// Shows the Feed in the main column unless a chat or the Feed already is.
+// Called when the main column would otherwise be empty.
+void ShowDefaultSection(not_null<Window::SessionController*> controller);
+
 class SectionMemento final : public Window::SectionMemento {
 public:
 	explicit SectionMemento(Section section) : _section(section) {

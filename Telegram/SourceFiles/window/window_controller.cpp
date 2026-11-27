@@ -265,13 +265,9 @@ void Controller::setupSideBar() {
 		sideBarChanged();
 	}
 
-	// GB: start on Home (the downloader), not on the chat list.
-	const auto controller = _sessionController.get();
-	crl::on_main(controller, [=] {
-		controller->showSection(
-			std::make_shared<GB::SectionMemento>(GB::Section::Home),
-			Window::SectionShow(anim::type::instant));
-	});
+	// GB: the main column starts on the Feed; the left column on Home
+	// (the downloader, see gb_left_panel.cpp).
+	GB::ShowDefaultSection(_sessionController.get());
 }
 
 void Controller::checkLockByTerms() {

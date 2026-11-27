@@ -111,6 +111,34 @@ gbFeedTitle: FlatLabel(defaultFlatLabel) {
 	}
 	minWidth: 100px;
 }
-gbFeedActionsHeight: 32px;
+gbFeedActionsHeight: 38px;
 gbFeedActionSkip: 20px;
 gbFeedSignInTop: 96px;
+
+// Feed menu in the left column.
+gbNavTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(semiboldTextStyle) {
+		font: font(20px semibold);
+	}
+	textFg: windowBoldFg;
+	minWidth: 100px;
+}
+gbNavTitlePadding: margins(22px, 18px, 22px, 0px);
+gbNavSlogan: FlatLabel(defaultFlatLabel) {
+	textFg: windowActiveTextFg;
+	minWidth: 100px;
+}
+gbNavSloganPadding: margins(22px, 2px, 22px, 14px);
+
+// Feed v2 cards (Facebook layout, Telegram colors).
+gbFeedCardRadius: 10px;
+gbFeedCardSkip: 12px;
+gbFeedSummaryHeight: 24px;
+gbFeedActionIcon: 24px;
+gbFeedActionIconSkip: 6px;
+gbFeedCommentUserpic: 32px;
+gbFeedCommentPadding: margins(12px, 7px, 12px, 7px);
+gbFeedWriteHeight: 36px;
+gbFeedWriteSkip: 14px;
+gbFeedComposerHeight: 40px;
+gbFeedComposerSkip: 10px;

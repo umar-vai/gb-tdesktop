@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_unread_value.h"
 #include "data/data_user.h"
+#include "gb/gb_section.h" // GB
 #include "gb/gb_sidebar.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
@@ -191,6 +192,15 @@ void FiltersMenu::setup() {
 			scrollToButton(j->second);
 		}
 		_reorder->finishReordering();
+	}, _outer.lifetime());
+
+	// GB: a folder looks active only while the chat list is shown.
+	GB::PanelValue(
+	) | rpl::on_next([=](GB::Panel panel) {
+		const auto i = _filters.find(_activeFilterId);
+		if (i != end(_filters)) {
+			i->second->setActive(panel == GB::Panel::Chats);
+		}
 	}, _outer.lifetime());
 
 	_menu.setClickedCallback([=] {
@@ -706,7 +716,8 @@ base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareButton(
 			return base::EventFilterResult::Cancel;
 		});
 	}
-	raw->setActive(_session->activeChatsFilterCurrent() == id);
+	raw->setActive(_session->activeChatsFilterCurrent() == id
+		&& GB::CurrentPanel() == GB::Panel::Chats); // GB
 	raw->setClickedCallback([=] {
 		if (_reordering) {
 			return;
@@ -716,6 +727,7 @@ base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareButton(
 				&_session->session(),
 				std::nullopt));
 		} else if (id >= 0) {
+			GB::ShowPanel(GB::Panel::Chats); // GB: folders live in Chats.
 			_session->setActiveChatsFilter(id);
 		} else {
 			openFiltersSettings();

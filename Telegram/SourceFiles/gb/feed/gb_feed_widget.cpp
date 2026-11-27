@@ -8,7 +8,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "gb/feed/gb_feed_api.h"
 #include "gb/feed/gb_feed_boxes.h"
+#include "gb/feed/gb_feed_drive.h"
 #include "gb/feed/gb_feed_posts.h"
+#include "data/data_peer.h"
+#include "data/data_user.h"
+#include "main/main_session.h"
+#include "ui/painter.h"
+#include "ui/userpic_view.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/discrete_sliders.h"
 #include "ui/widgets/fields/input_field.h"
@@ -64,6 +70,107 @@ const std::vector<TabInfo> &Tabs() {
 	};
 	return result;
 }
+
+// The card at the top of the Feed: your picture, "What do you want to
+// share?" and quick buttons for the post kinds, like Facebook's composer.
+class ComposerCard final : public Ui::RpWidget {
+public:
+	ComposerCard(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller)
+	: RpWidget(parent)
+	, _controller(controller)
+	, _field(this) {
+		_field->setCursor(style::cur_text);
+		_field->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(_field.data());
+			auto hq = PainterHighQualityEnabler(p);
+			const auto r = _field->rect();
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(r, r.height() / 2., r.height() / 2.);
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			const auto user = _controller->session().user();
+			p.drawText(
+				r.marginsRemoved({ st::gbFeedWriteSkip, 0, 0, 0 }),
+				Qt::AlignLeft | Qt::AlignVCenter,
+				u"What do you want to share, %1?"_q.arg(user->firstName));
+		}, _field->lifetime());
+		_field->setClickedCallback([=] { ShowComposeBox(_controller); });
+
+		const auto add = [&](
+				const style::icon &icon,
+				const QString &text,
+				const QString &kind) {
+			const auto button = CreateActionButton(this, &icon, text);
+			button->setClickedCallback([=] {
+				ShowComposeBox(_controller, { .kind = kind });
+			});
+			_buttons.push_back(button);
+		};
+		add(st::menuIconFile, u"Share a file"_q, u"file"_q);
+		add(st::menuIconSearch, u"Need a file"_q, u"need"_q);
+		add(st::menuIconPhoto, u"Photo"_q, QString());
+		add(st::menuIconCreatePoll, u"Poll"_q, u"poll"_q);
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		const auto &pad = st::gbFeedCardPadding;
+		const auto size = st::gbFeedComposerHeight;
+		const auto fieldLeft = pad.left() + size + st::gbFeedComposerSkip;
+		_field->setGeometry(
+			fieldLeft,
+			pad.top(),
+			std::max(newWidth - fieldLeft - pad.right(), 1),
+			size);
+		_lineTop = pad.top() + size + st::gbFeedComposerSkip;
+		const auto top = _lineTop + st::gbFeedSkip / 2;
+		const auto inner = newWidth - pad.left() / 2 - pad.right() / 2;
+		const auto count = int(_buttons.size());
+		for (auto i = 0; i != count; ++i) {
+			const auto left = pad.left() / 2 + inner * i / count;
+			const auto right = pad.left() / 2 + inner * (i + 1) / count;
+			_buttons[i]->setGeometry(
+				left,
+				top,
+				right - left,
+				st::gbFeedActionsHeight);
+		}
+		return top + st::gbFeedActionsHeight + st::gbFeedSkip / 2;
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(rect(), st::gbFeedCardRadius, st::gbFeedCardRadius);
+		const auto &pad = st::gbFeedCardPadding;
+		_controller->session().user()->paintUserpicLeft(
+			p,
+			_userpic,
+			pad.left(),
+			pad.top(),
+			width(),
+			st::gbFeedComposerHeight);
+		p.fillRect(
+			pad.left(),
+			_lineTop,
+			width() - pad.left() - pad.right(),
+			st::lineWidth,
+			st::shadowFg);
+	}
+
+private:
+	const not_null<Window::SessionController*> _controller;
+	object_ptr<Ui::AbstractButton> _field;
+	std::vector<not_null<Ui::AbstractButton*>> _buttons;
+	Ui::PeerUserpicView _userpic;
+	int _lineTop = 0;
+
+};
 
 } // namespace
 
@@ -144,6 +251,14 @@ Widget::Widget(
 		}
 	}, lifetime());
 	api.refreshUnread();
+
+	// No extra clicks: signing in to the Feed only needs the Telegram
+	// account, so it starts by itself the first time the Feed is shown.
+	if (!api.signedIn()) {
+		crl::on_main(this, [=] {
+			signIn();
+		});
+	}
 }
 
 void Widget::setInnerFocus() {
@@ -172,7 +287,7 @@ void Widget::signIn() {
 
 void Widget::updateSignedIn() {
 	const auto signedIn = Api::Instance().signedIn();
-	_compose->setVisible(signedIn);
+	_compose->setVisible(false); // The composer card replaces it.
 	_search->setVisible(signedIn);
 	_notifications->setVisible(signedIn);
 	_tabs->setVisible(signedIn);
@@ -180,6 +295,7 @@ void Widget::updateSignedIn() {
 	_signInAbout->setVisible(!signedIn);
 	_signIn->setVisible(!signedIn);
 	if (signedIn) {
+		SyncLibraries(_controller);
 		showTab(_tab);
 	} else {
 		_list = nullptr;
@@ -196,6 +312,7 @@ void Widget::showTab(int index) {
 		_controller,
 		tab.path,
 		tab.empty));
+	_list->setTop(object_ptr<ComposerCard>(_list.data(), _controller));
 	_scroll->scrollToY(0);
 	resizeEvent(nullptr);
 }
@@ -283,7 +400,7 @@ void Widget::resizeEvent(QResizeEvent *e) {
 		left + contentWidth - _menuToggle->width() - st::gbDlFieldSkip
 			- _notifications->width(),
 		top + (rowHeight - _notifications->height()) / 2);
-	const auto searchLeft = left + _compose->width() + st::gbDlFieldSkip;
+	const auto searchLeft = left;
 	const auto searchWidth = std::max(
 		_notifications->x() - st::gbDlFieldSkip - searchLeft,
 		0);
@@ -305,7 +422,8 @@ void Widget::resizeEvent(QResizeEvent *e) {
 
 void Widget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
-	p.fillRect(e->rect(), st::windowBg);
+	// Gray page, white cards (Facebook's layout in Telegram's colors).
+	p.fillRect(e->rect(), st::windowBgOver);
 }
 
 } // namespace GB::Feed

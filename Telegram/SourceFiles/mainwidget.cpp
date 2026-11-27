@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mainwidget.h"
 
+#include "gb/gb_section.h" // GB: Feed as the default main section
+
 #include "api/api_updates.h"
 #include "api/api_views.h"
 #include "apiwrap.h"
@@ -1704,6 +1706,10 @@ void MainWidget::showHistory(
 	if (noPeer) {
 		_controller->setActiveChatEntry(Dialogs::Key());
 		_controller->setChatStyleTheme(_controller->defaultChatTheme());
+		// GB: an empty main column shows the Feed instead.
+		if (!onlyDialogs && isPrimary()) {
+			GB::ShowDefaultSection(_controller);
+		}
 	}
 
 	if (onlyDialogs) {

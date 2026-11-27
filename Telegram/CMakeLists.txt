@@ -1058,14 +1058,22 @@ PRIVATE
     gb/feed/gb_feed_api.h
     gb/feed/gb_feed_boxes.cpp
     gb/feed/gb_feed_boxes.h
+    gb/feed/gb_feed_drive.cpp
+    gb/feed/gb_feed_drive.h
+    gb/feed/gb_feed_nav.cpp
+    gb/feed/gb_feed_nav.h
     gb/feed/gb_feed_posts.cpp
     gb/feed/gb_feed_posts.h
+    gb/feed/gb_feed_reactions.cpp
+    gb/feed/gb_feed_reactions.h
     gb/feed/gb_feed_widget.cpp
     gb/feed/gb_feed_widget.h
     gb/gb_section.cpp
     gb/gb_section.h
     gb/gb_sidebar.cpp
     gb/gb_sidebar.h
+    gb/gb_left_panel.cpp
+    gb/gb_left_panel.h
     gb/gb_strings.h
     gb/gb_version.h
     gb/transfers/gb_tr_boxes.cpp

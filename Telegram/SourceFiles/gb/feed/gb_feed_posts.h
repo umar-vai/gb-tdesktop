@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonObject>
 
 namespace Ui {
+class AbstractButton;
 class PopupMenu;
 class FlatLabel;
 class LinkButton;
@@ -52,6 +53,9 @@ public:
 	void setPost(const QJsonObject &post);
 	[[nodiscard]] int64 postId() const;
 
+protected:
+	void paintEvent(QPaintEvent *e) override;
+
 private:
 	void fill();
 	void addHeader();
@@ -60,6 +64,8 @@ private:
 	void addPoll(const QJsonObject &poll);
 	void addShared(const QJsonObject &shared);
 	void addActions();
+	void addSummary();
+	void addCommentPreview();
 	void showMenu();
 	void showReactions(QPoint globalPosition);
 	void react(const QString &emoji);
@@ -83,12 +89,16 @@ public:
 
 	void reload();
 
+	// A widget shown above the posts (the Feed's composer card).
+	void setTop(object_ptr<Ui::RpWidget> top);
+
 private:
 	void load();
 
 	const not_null<Window::SessionController*> _controller;
 	const QString _path;
 	const QString _emptyText;
+	Ui::VerticalLayout *_top = nullptr;
 	Ui::VerticalLayout *_posts = nullptr;
 	Ui::FlatLabel *_status = nullptr;
 	Ui::LinkButton *_more = nullptr;
@@ -97,6 +107,12 @@ private:
 	int _generation = 0;
 
 };
+
+// A Like / Comment / Share style button: icon (or emoji) and a label.
+[[nodiscard]] not_null<Ui::AbstractButton*> CreateActionButton(
+	not_null<QWidget*> parent,
+	const style::icon *icon,
+	const QString &text);
 
 [[nodiscard]] QString FormatBytes(int64 size);
 [[nodiscard]] QString KindLabel(const QString &kind);

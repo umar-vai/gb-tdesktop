@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "core/file_utilities.h"
 #include "gb/feed/gb_feed_api.h"
+#include "gb/feed/gb_feed_drive.h"
 #include "gb/feed/gb_feed_posts.h"
 #include "gb/transfers/gb_tr_boxes.h"
 #include "gb/transfers/gb_tr_daemon.h"
@@ -311,9 +312,13 @@ void ShowComposeBox(Controller controller, ComposeArgs args) {
 		const auto container = box->verticalLayout();
 
 		const auto kinds = std::vector<QString>{
-			u"text"_q, u"need"_q, u"have"_q, u"poll"_q };
+			u"text"_q, u"need"_q, u"have"_q, u"poll"_q, u"file"_q };
 		const auto kindLabels = std::vector<QString>{
-			u"Post"_q, u"I need a file"_q, u"I have a file"_q, u"Poll"_q };
+			u"Post"_q,
+			u"I need a file"_q,
+			u"I have a big file (direct transfer)"_q,
+			u"Poll"_q,
+			u"Share a file (Telegram cloud)"_q };
 		const auto privacies = std::vector<QString>{
 			u"public"_q, u"friends"_q, u"only_me"_q };
 		const auto privacyLabels = std::vector<QString>{
@@ -328,6 +333,7 @@ void ShowComposeBox(Controller controller, ComposeArgs args) {
 			rpl::variable<int> privacy = 0;
 			rpl::variable<int> category = 11;
 			rpl::variable<QString> image;
+			rpl::variable<QString> localPath;
 			bool sending = false;
 		};
 		const auto state = box->lifetime().make_state<State>();
@@ -376,6 +382,48 @@ void ShowComposeBox(Controller controller, ComposeArgs args) {
 		} } });
 		fileWrap->toggleOn(state->kind.value() | rpl::map([=](int kind) {
 			return !editing && !sharing && (kind == 1 || kind == 2);
+		}));
+
+		// file: a file from this PC, uploaded to the user's own G&B Drive
+		// (their Telegram), then shared in the post.
+		const auto driveWrap = container->add(
+			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				container,
+				object_ptr<Ui::VerticalLayout>(container)));
+		const auto drive = driveWrap->entity();
+		const auto driveLabel = AddText(drive, QString(), st::gbFeedSub);
+		state->localPath.value() | rpl::on_next([=](const QString &path) {
+			const auto info = QFileInfo(path);
+			driveLabel->setText(path.isEmpty()
+				? u"Up to %1. The file stays in your own Telegram (an "
+					"archived \"G&B Drive\" channel); anyone in the Feed "
+					"can download it."_q.arg(
+						FormatBytes(DriveFileLimit(controller)))
+				: (u"📁 "_q + info.fileName() + u" · "_q
+					+ FormatBytes(info.size())));
+		}, driveLabel->lifetime());
+		AddLinks(drive, { { u"Choose the file..."_q, [=] {
+			FileDialog::GetOpenPath(
+				QPointer<QWidget>(box.get()),
+				u"Choose the file to share"_q,
+				QString(),
+				[=](FileDialog::OpenResult &&result) {
+					if (result.paths.isEmpty()) {
+						return;
+					}
+					const auto path = result.paths.front();
+					if (QFileInfo(path).size() > DriveFileLimit(controller)) {
+						controller->showToast(u"This file is bigger than "
+							"Telegram allows. Choose \"I have a big file\" "
+							"to send it directly instead."_q);
+						return;
+					}
+					state->localPath = path;
+				});
+		} } });
+		AddChoice(drive, controller, u"Category"_q, categories, &state->category);
+		driveWrap->toggleOn(state->kind.value() | rpl::map([=](int kind) {
+			return !editing && !sharing && kind == 4;
 		}));
 
 		// poll: options.
@@ -514,16 +562,50 @@ void ShowComposeBox(Controller controller, ComposeArgs args) {
 			}
 			state->sending = true;
 			const auto weak = QPointer<Ui::GenericBox>(box.get());
-			Api::Instance().send(method, path, body, [=](const QJsonObject &) {
-				controller->showToast(editing ? u"Saved."_q : u"Posted."_q);
-				Api::Instance().notifyChanged();
-				if (const auto strong = weak.data()) {
-					strong->closeBox();
+			const auto post = [=](QJsonObject body) {
+				Api::Instance().send(method, path, body, [=](const QJsonObject &) {
+					controller->showToast(editing ? u"Saved."_q : u"Posted."_q);
+					Api::Instance().notifyChanged();
+					if (const auto strong = weak.data()) {
+						strong->closeBox();
+					}
+				}, [=](const QString &error) {
+					state->sending = false;
+					controller->showToast(ErrorText(error));
+				});
+			};
+			if (!editing && !sharing && kind == u"file"_q) {
+				const auto local = state->localPath.current();
+				if (local.isEmpty()) {
+					state->sending = false;
+					controller->showToast(u"Choose the file first."_q);
+					return;
 				}
-			}, [=](const QString &error) {
-				state->sending = false;
-				controller->showToast(ErrorText(error));
-			});
+				auto f = QJsonObject();
+				f.insert(u"category"_q, categories[state->category.current()]);
+				body.insert(u"file"_q, f);
+				box->setTitle(rpl::single(u"Uploading to your G&B Drive..."_q));
+				UploadToDrive(controller, local, crl::guard(box, [=](UploadProgress p) {
+					if (p.total > 0) {
+						box->setTitle(rpl::single(u"Uploading... %1%"_q.arg(
+							int(p.sent * 100 / p.total))));
+					}
+				}), [=](QJsonObject file) {
+					auto copy = body;
+					copy.insert(u"cloud_file_id"_q, file.value(u"id"_q));
+					post(copy);
+				}, [=](QString error) {
+					state->sending = false;
+					if (const auto strong = weak.data()) {
+						strong->setTitle(rpl::single(u"New post"_q));
+					}
+					controller->showToast((error == u"file_too_big"_q)
+						? u"This file is bigger than Telegram allows."_q
+						: ErrorText(error));
+				});
+				return;
+			}
+			post(body);
 		};
 		box->addButton(
 			rpl::single(editing ? u"Save"_q : sharing ? u"Share"_q : u"Post"_q),

@@ -23,15 +23,15 @@ not_null<Ui::VerticalLayout*> SetupSidebarSections(
 		not_null<Window::SessionController*> controller,
 		const style::SideBarButton &st) {
 	struct Entry {
-		Section section = Section::None;
+		Panel panel = Panel::Chats;
 		QString label;
 		Ui::FilterIcon icon = Ui::FilterIcon::All;
 	};
 	const auto entries = std::vector<Entry>{
-		{ Section::Home, Strings::Home(), Ui::FilterIcon::Home },
-		{ Section::Feed, Strings::Feed(), Ui::FilterIcon::Like },
-		{ Section::None, Strings::Chats(), Ui::FilterIcon::All },
-		{ Section::Transfers, Strings::Transfers(), Ui::FilterIcon::Airplane },
+		{ Panel::Home, Strings::Home(), Ui::FilterIcon::Home },
+		{ Panel::Feed, Strings::Feed(), Ui::FilterIcon::Like },
+		{ Panel::Chats, Strings::Chats(), Ui::FilterIcon::All },
+		{ Panel::Transfers, Strings::Transfers(), Ui::FilterIcon::Airplane },
 	};
 
 	const auto layout = Ui::CreateChild<Ui::VerticalLayout>(parent.get());
@@ -44,18 +44,20 @@ not_null<Ui::VerticalLayout*> SetupSidebarSections(
 		button->setIconOverride(icons.normal, icons.active);
 		button->setAccessibleName(entry.label);
 
-		const auto section = entry.section;
+		// Each button switches the left column. The main column keeps the
+		// Feed; the Feed button also brings it back when a chat is open.
+		const auto panel = entry.panel;
 		button->setClickedCallback([=] {
-			if (section == Section::None) {
-				controller->clearSectionStack();
-			} else {
+			ShowPanel(panel);
+			if (panel == Panel::Feed) {
 				controller->showSection(
-					std::make_shared<SectionMemento>(section));
+					std::make_shared<SectionMemento>(Section::Feed),
+					Window::SectionShow(Window::SectionShow::Way::ClearStack));
 			}
 		});
-		ShownSectionValue(
-		) | rpl::on_next([=](Section shown) {
-			button->setActive(shown == section);
+		PanelValue(
+		) | rpl::on_next([=](Panel shown) {
+			button->setActive(shown == panel);
 		}, button->lifetime());
 	}
 	Transfers::WatchIncoming(controller);

@@ -44,10 +44,42 @@ namespace {
 	return QString();
 }
 
+[[nodiscard]] rpl::variable<Panel> &PanelState() {
+	static auto result = rpl::variable<Panel>(Panel::Home);
+	return result;
+}
+
 } // namespace
 
 rpl::producer<Section> ShownSectionValue() {
 	return ShownSection().value();
+}
+
+Panel CurrentPanel() {
+	return PanelState().current();
+}
+
+rpl::producer<Panel> PanelValue() {
+	return PanelState().value();
+}
+
+void ShowPanel(Panel panel) {
+	PanelState() = panel;
+}
+
+void ShowDefaultSection(not_null<Window::SessionController*> controller) {
+	crl::on_main(controller, [=] {
+		if (ShownSection().current() == Section::Feed
+			|| controller->activeChatCurrent()) {
+			return;
+		}
+		controller->showSection(
+			std::make_shared<SectionMemento>(Section::Feed),
+			Window::SectionShow(
+				Window::SectionShow::Way::ClearStack,
+				anim::type::instant,
+				anim::activation::background));
+	});
 }
 
 object_ptr<Window::SectionWidget> SectionMemento::createWidget(

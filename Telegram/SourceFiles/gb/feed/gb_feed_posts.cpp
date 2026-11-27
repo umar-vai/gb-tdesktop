@@ -9,13 +9,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "gb/feed/gb_feed_api.h"
 #include "gb/feed/gb_feed_boxes.h"
+#include "gb/feed/gb_feed_drive.h"
+#include "gb/feed/gb_feed_reactions.h"
 #include "gb/transfers/gb_tr_boxes.h"
 #include "layout/layout_document_generic_preview.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/effects/ripple_animation.h"
+#include "ui/emoji_config.h"
 #include "ui/empty_userpic.h"
+#include "ui/filter_icons.h"
 #include "ui/painter.h"
 #include "ui/text/text_entity.h"
+#include "ui/text/text_utilities.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
@@ -38,9 +44,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace GB::Feed {
 namespace {
 
-const auto kReactions = std::vector<QString>{
-	u"👍"_q, u"❤️"_q, u"😂"_q, u"😮"_q, u"😢"_q, u"😡"_q, u"🔥"_q, u"🙏"_q,
-};
 
 [[nodiscard]] int64 IdOf(const QJsonValue &value) {
 	return value.toVariant().toLongLong();
@@ -243,7 +246,166 @@ private:
 
 };
 
+
+// One button of the Like / Comment / Share bar: an icon (or the emoji you
+// reacted with) and a label, centered, with Telegram's ripple on click.
+class ActionButton final : public Ui::RippleButton {
+public:
+	ActionButton(QWidget *parent)
+	: RippleButton(parent, st::defaultRippleAnimation) {
+		resize(width(), st::gbFeedActionsHeight);
+	}
+
+	void setContent(
+			const style::icon *icon,
+			const QString &emoji,
+			const QString &text,
+			bool active) {
+		_icon = icon;
+		_emoji = emoji.isEmpty() ? nullptr : Ui::Emoji::Find(emoji);
+		_text = text;
+		_active = active;
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		if (isOver()) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(rect(), st::roundRadiusLarge, st::roundRadiusLarge);
+		}
+		paintRipple(p, 0, 0);
+
+		const auto &font = st::semiboldFont;
+		const auto textWidth = font->width(_text);
+		const auto iconSize = st::gbFeedActionIcon;
+		const auto skip = st::gbFeedActionIconSkip;
+		const auto full = iconSize + skip + textWidth;
+		auto left = (width() - full) / 2;
+		const auto top = (height() - iconSize) / 2;
+		if (_emoji) {
+			const auto size = Ui::Emoji::GetSizeNormal();
+			const auto drawn = size / style::DevicePixelRatio();
+			Ui::Emoji::Draw(
+				p,
+				_emoji,
+				size,
+				left + (iconSize - drawn) / 2,
+				(height() - drawn) / 2);
+		} else if (_icon) {
+			_icon->paint(
+				p,
+				left + (iconSize - _icon->width()) / 2,
+				(height() - _icon->height()) / 2,
+				width());
+		}
+		left += iconSize + skip;
+		p.setFont(font);
+		p.setPen(_active ? st::windowActiveTextFg : st::windowSubTextFg);
+		p.drawText(
+			left,
+			(height() - font->height) / 2 + font->ascent,
+			_text);
+	}
+
+	QImage prepareRippleMask() const override {
+		return Ui::RippleAnimation::RoundRectMask(
+			size(),
+			st::roundRadiusLarge);
+	}
+
+private:
+	const style::icon *_icon = nullptr;
+	EmojiPtr _emoji = nullptr;
+	QString _text;
+	bool _active = false;
+
+};
+
+[[nodiscard]] QString CountText(int count, const QString &one, const QString &many) {
+	return QString::number(count) + ' ' + ((count == 1) ? one : many);
+}
+
+// A comment under a post, Facebook style: a small userpic and a gray
+// bubble with the bold name and the text.
+class CommentBubble final : public Ui::RpWidget {
+public:
+	CommentBubble(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &comment)
+	: RpWidget(parent)
+	, _userpic(
+		this,
+		comment.value(u"author"_q).toObject(),
+		st::gbFeedCommentUserpic)
+	, _label(this, st::gbFeedText) {
+		const auto author = comment.value(u"author"_q).toObject();
+		auto text = Ui::Text::Bold(author.value(u"name"_q).toString());
+		const auto body = comment.value(u"text"_q).toString();
+		if (!body.isEmpty()) {
+			text.append('\n').append(body);
+		}
+		if (!comment.value(u"gif"_q).toString().isEmpty()) {
+			text.append(body.isEmpty() ? u"\nGIF"_q : u" · GIF"_q);
+		}
+		_label->setMarkedText(text);
+		const auto post = comment.value(u"post_id"_q).toVariant().toLongLong();
+		_label->setAttribute(Qt::WA_TransparentForMouseEvents);
+		setCursor(style::cur_pointer);
+		events() | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=] {
+			ShowPostBox(controller, post);
+		}, lifetime());
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		const auto &pad = st::gbFeedCommentPadding;
+		const auto left = st::gbFeedCommentUserpic + st::gbFeedSkip;
+		const auto available = std::max(
+			newWidth - left - pad.left() - pad.right(),
+			1);
+		_label->resizeToNaturalWidth(available);
+		_label->moveToLeft(left + pad.left(), pad.top());
+		_userpic->moveToLeft(0, 0);
+		_bubble = QRect(
+			left,
+			0,
+			_label->width() + pad.left() + pad.right(),
+			_label->height() + pad.top() + pad.bottom());
+		return std::max(_bubble.height(), st::gbFeedCommentUserpic);
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		p.drawRoundedRect(_bubble, st::gbFeedCardRadius, st::gbFeedCardRadius);
+	}
+
+private:
+	object_ptr<Userpic> _userpic;
+	object_ptr<Ui::FlatLabel> _label;
+	QRect _bubble;
+
+};
+
 } // namespace
+
+not_null<Ui::AbstractButton*> CreateActionButton(
+		not_null<QWidget*> parent,
+		const style::icon *icon,
+		const QString &text) {
+	const auto result = Ui::CreateChild<ActionButton>(parent.get());
+	result->setContent(icon, QString(), text, false);
+	return result;
+}
 
 QString FormatBytes(int64 size) {
 	if (size < 1024) {
@@ -266,6 +428,8 @@ QString KindLabel(const QString &kind) {
 		return u"NEED"_q;
 	} else if (kind == u"have"_q) {
 		return u"HAVE"_q;
+	} else if (kind == u"file"_q) {
+		return u"CLOUD"_q;
 	}
 	return QString();
 }
@@ -376,10 +540,20 @@ void PostCard::fill() {
 	if (!shared.isEmpty()) {
 		addShared(shared);
 	}
+	addSummary();
 	addActions();
+	addCommentPreview();
 	Ui::AddSkip(this, pad.bottom());
-	Ui::AddDivider(this);
 	resizeToWidth(width());
+}
+
+void PostCard::paintEvent(QPaintEvent *e) {
+	// A white card with rounded corners on the Feed's gray background.
+	auto p = QPainter(this);
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::windowBg);
+	p.drawRoundedRect(rect(), st::gbFeedCardRadius, st::gbFeedCardRadius);
 }
 
 void PostCard::addHeader() {
@@ -533,100 +707,224 @@ void PostCard::addShared(const QJsonObject &shared) {
 	button->setClickedCallback([=] { ShowPostBox(controller, id); });
 }
 
-void PostCard::addActions() {
+void PostCard::addSummary() {
+	// Facebook's summary line: reaction icons with the total on the left,
+	// comments / shares / downloads on the right.
 	const auto &pad = st::gbFeedCardPadding;
 	const auto counts = _post.value(u"counts"_q).toObject();
 	const auto reactions = counts.value(u"reactions"_q).toInt();
 	const auto comments = counts.value(u"comments"_q).toInt();
 	const auto shares = counts.value(u"shares"_q).toInt();
 	const auto requests = counts.value(u"requests"_q).toInt();
+	const auto downloads = counts.value(u"downloads"_q).toInt();
 	const auto kind = _post.value(u"kind"_q).toString();
-	const auto mine = _post.value(u"mine"_q).toBool();
-	const auto id = postId();
-	const auto controller = _controller;
-
-	auto summary = QStringList();
-	if (reactions) {
-		summary.push_back(QString::number(reactions)
-			+ (reactions == 1 ? u" reaction"_q : u" reactions"_q));
-	}
+	auto right = QStringList();
 	if (comments) {
-		summary.push_back(QString::number(comments)
-			+ (comments == 1 ? u" comment"_q : u" comments"_q));
+		right.push_back(CountText(comments, u"comment"_q, u"comments"_q));
 	}
 	if (shares) {
-		summary.push_back(QString::number(shares)
-			+ (shares == 1 ? u" share"_q : u" shares"_q));
+		right.push_back(CountText(shares, u"share"_q, u"shares"_q));
+	}
+	if (downloads) {
+		right.push_back(CountText(downloads, u"download"_q, u"downloads"_q));
 	}
 	if (requests && kind == u"have"_q) {
-		summary.push_back(QString::number(requests)
-			+ (requests == 1 ? u" request"_q : u" requests"_q));
+		right.push_back(CountText(requests, u"request"_q, u"requests"_q));
 	}
-	if (!summary.isEmpty()) {
-		const auto button = add(
-			object_ptr<Ui::LinkButton>(
-				this,
-				summary.join(u" • "_q),
-				st::defaultLinkButton),
-			QMargins(pad.left(), st::gbFeedSkip, pad.right(), 0));
-		button->setColorOverride(st::windowSubTextFg->c);
-		button->setClickedCallback([=] {
-			if (reactions) {
-				ShowReactionsBox(controller, id);
-			} else {
-				ShowCommentsBox(controller, _post);
-			}
-		});
+	if (!reactions && right.isEmpty()) {
+		return;
 	}
+	auto left = QString();
+	for (const auto emoji : _post.value(u"top_reactions"_q).toArray()) {
+		left += emoji.toString();
+	}
+	if (reactions) {
+		if (left.isEmpty()) {
+			left = u"👍"_q;
+		}
+		left += ' ' + QString::number(reactions);
+	}
+	const auto row = add(
+		object_ptr<Ui::RpWidget>(this),
+		QMargins(pad.left(), st::gbFeedSkip, pad.right(), 0));
+	row->resize(row->width(), st::gbFeedSummaryHeight);
+	const auto id = postId();
+	const auto controller = _controller;
+	const auto post = _post;
+	const auto leftButton = Ui::CreateChild<Ui::LinkButton>(
+		row,
+		left,
+		st::defaultLinkButton);
+	leftButton->setColorOverride(st::windowSubTextFg->c);
+	leftButton->setClickedCallback([=] { ShowReactionsBox(controller, id); });
+	leftButton->setVisible(reactions > 0);
+	const auto rightButton = Ui::CreateChild<Ui::LinkButton>(
+		row,
+		right.join(u" · "_q),
+		st::defaultLinkButton);
+	rightButton->setColorOverride(st::windowSubTextFg->c);
+	rightButton->setClickedCallback([=] {
+		ShowCommentsBox(controller, post);
+	});
+	row->widthValue() | rpl::on_next([=](int width) {
+		const auto top = [&](not_null<QWidget*> w) {
+			return (row->height() - w->height()) / 2;
+		};
+		leftButton->moveToLeft(0, top(leftButton), width);
+		rightButton->moveToRight(0, top(rightButton), width);
+	}, row->lifetime());
+}
+
+void PostCard::addActions() {
+	const auto &pad = st::gbFeedCardPadding;
+	const auto kind = _post.value(u"kind"_q).toString();
+	const auto mine = _post.value(u"mine"_q).toBool();
+	const auto controller = _controller;
+	const auto post = _post;
+
+	// A thin line, then equal-width buttons, like Facebook.
+	const auto line = add(
+		object_ptr<Ui::RpWidget>(this),
+		QMargins(pad.left(), st::gbFeedSkip, pad.right(), 0));
+	line->resize(line->width(), st::lineWidth);
+	line->paintRequest() | rpl::on_next([=] {
+		QPainter(line).fillRect(line->rect(), st::shadowFg);
+	}, line->lifetime());
 
 	const auto row = add(
 		object_ptr<Ui::RpWidget>(this),
-		QMargins(pad.left(), st::gbFeedSkip / 2, pad.right(), 0));
+		QMargins(pad.left() / 2, st::gbFeedSkip / 2, pad.right() / 2, 0));
 	row->resize(row->width(), st::gbFeedActionsHeight);
-	auto buttons = std::vector<Ui::LinkButton*>();
-	const auto addButton = [&](const QString &text, Fn<void()> callback) {
-		const auto button = Ui::CreateChild<Ui::LinkButton>(row, text);
+	auto buttons = std::vector<ActionButton*>();
+	const auto addButton = [&](
+			const style::icon *icon,
+			const QString &emoji,
+			const QString &text,
+			bool active,
+			Fn<void()> callback) {
+		const auto button = Ui::CreateChild<ActionButton>(row);
+		button->setContent(icon, emoji, text, active);
 		button->setClickedCallback(std::move(callback));
 		buttons.push_back(button);
 		return button;
 	};
+
 	const auto myReaction = _post.value(u"my_reaction"_q).toString();
-	addButton(
-		myReaction.isEmpty() ? u"👍 Like"_q : (myReaction + u" Reacted"_q),
+	const auto weak = QPointer<PostCard>(this);
+	const auto like = addButton(
+		Ui::LookupFilterIcon(Ui::FilterIcon::Like).normal,
+		myReaction,
+		myReaction.isEmpty() ? u"Like"_q : u"Reacted"_q,
+		!myReaction.isEmpty(),
 		[=] { react(myReaction.isEmpty() ? u"👍"_q : QString()); });
-	addButton(u"😀 React"_q, [=] { showReactions(QCursor::pos()); });
-	addButton(u"💬 Comment"_q, [=] { ShowCommentsBox(controller, _post); });
-	addButton(u"↪ Share"_q, [=] {
-		ShowComposeBox(controller, { .shared = _post });
+	SetupReactionHover(like, controller, [=](QString emoji) {
+		if (const auto strong = weak.data()) {
+			strong->react(emoji);
+		}
 	});
-	if (kind == u"have"_q) {
+	addButton(&st::menuIconReply, QString(), u"Comment"_q, false, [=] {
+		ShowCommentsBox(controller, post);
+	});
+	addButton(&st::menuIconShare, QString(), u"Share"_q, false, [=] {
+		ShowComposeBox(controller, { .shared = post });
+	});
+	if (kind == u"file"_q) {
+		const auto cloud = _post.value(u"cloud_file"_q).toObject();
+		const auto removed = cloud.isEmpty()
+			|| cloud.value(u"removed"_q).toBool();
+		const auto id = postId();
+		addButton(
+			&st::menuIconDownload,
+			QString(),
+			removed ? u"Removed"_q : u"Download"_q,
+			!removed,
+			[=] {
+				if (removed) {
+					controller->showToast(u"The owner removed this file."_q);
+				} else {
+					DownloadCloudFile(controller, cloud, id);
+				}
+			});
+	} else if (kind == u"have"_q) {
 		if (mine) {
-			addButton(u"📥 Requests"_q, [=] { ShowRequestsBox(controller); });
+			addButton(&st::menuIconDownload, QString(), u"Requests"_q, false, [=] {
+				ShowRequestsBox(controller);
+			});
 		} else {
 			const auto request = _post.value(u"my_request"_q).toObject();
 			const auto status = request.value(u"status"_q).toString();
 			if (status == u"approved"_q) {
 				const auto invite = request.value(u"invite"_q).toString();
-				addButton(u"⬇ Receive file"_q, [=] {
+				addButton(&st::menuIconDownload, QString(), u"Receive"_q, true, [=] {
 					Transfers::Receive(controller, invite);
 				});
 			} else if (status == u"pending"_q) {
-				addButton(u"⏳ Requested"_q, [=] {
+				addButton(&st::menuIconSchedule, QString(), u"Requested"_q, false, [=] {
 					controller->showToast(
 						u"Waiting for the owner to approve your request."_q);
 				});
 			} else {
-				addButton(u"📥 Request file"_q, [=] { requestFile(); });
+				addButton(&st::menuIconDownload, QString(), u"Request"_q, false, [=] {
+					requestFile();
+				});
 			}
 		}
 	}
 	row->widthValue() | rpl::on_next([=](int width) {
-		auto left = 0;
-		for (const auto button : buttons) {
-			button->moveToLeft(left, (row->height() - button->height()) / 2, width);
-			left += button->width() + st::gbFeedActionSkip;
+		const auto count = int(buttons.size());
+		for (auto i = 0; i != count; ++i) {
+			const auto left = width * i / count;
+			const auto right = width * (i + 1) / count;
+			buttons[i]->setGeometry(left, 0, right - left, row->height());
 		}
 	}, row->lifetime());
+}
+
+void PostCard::addCommentPreview() {
+	const auto &pad = st::gbFeedCardPadding;
+	const auto controller = _controller;
+	const auto post = _post;
+	const auto preview = _post.value(u"comment_preview"_q).toArray();
+	const auto total = _post.value(u"counts"_q).toObject().value(
+		u"comments"_q).toInt();
+	if (total > preview.size()) {
+		const auto more = add(
+			object_ptr<Ui::LinkButton>(
+				this,
+				u"View all %1 comments"_q.arg(total),
+				st::defaultLinkButton),
+			QMargins(pad.left(), st::gbFeedSkip / 2, pad.right(), 0));
+		more->setColorOverride(st::windowSubTextFg->c);
+		more->setClickedCallback([=] { ShowCommentsBox(controller, post); });
+	}
+	for (const auto value : preview) {
+		const auto comment = value.toObject();
+		add(
+			object_ptr<CommentBubble>(this, controller, comment),
+			QMargins(pad.left(), st::gbFeedSkip / 2, pad.right(), 0));
+	}
+
+	// "Write a comment..." opens the comments with the field focused.
+	const auto write = add(
+		object_ptr<Ui::AbstractButton>(this),
+		QMargins(pad.left(), st::gbFeedSkip / 2, pad.right(), 0));
+	write->resize(write->width(), st::gbFeedWriteHeight);
+	write->setCursor(style::cur_text);
+	write->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(write);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto r = write->rect();
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		p.drawRoundedRect(r, r.height() / 2., r.height() / 2.);
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(
+			r.marginsRemoved({ st::gbFeedWriteSkip, 0, 0, 0 }),
+			Qt::AlignLeft | Qt::AlignVCenter,
+			u"Write a comment..."_q);
+	}, write->lifetime());
+	write->setClickedCallback([=] { ShowCommentsBox(controller, post); });
 }
 
 void PostCard::apply(const QJsonObject &response) {
@@ -658,7 +956,7 @@ void PostCard::react(const QString &emoji) {
 
 void PostCard::showReactions(QPoint globalPosition) {
 	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-	for (const auto &emoji : kReactions) {
+	for (const auto &emoji : { u"👍"_q, u"❤"_q, u"😁"_q, u"😮"_q, u"😢"_q, u"🔥"_q, u"🙏"_q }) {
 		_menu->addAction(emoji, [=] { react(emoji); });
 	}
 	if (!_post.value(u"my_reaction"_q).toString().isEmpty()) {
@@ -795,6 +1093,7 @@ PostList::PostList(
 , _controller(controller)
 , _path(path)
 , _emptyText(emptyText) {
+	_top = add(object_ptr<Ui::VerticalLayout>(this));
 	_posts = add(object_ptr<Ui::VerticalLayout>(this));
 	_status = add(
 		object_ptr<Ui::FlatLabel>(this, QString(), st::gbDlEmpty),
@@ -806,6 +1105,12 @@ PostList::PostList(
 	_more->setClickedCallback([=] { load(); });
 	_more->hide();
 	reload();
+}
+
+void PostList::setTop(object_ptr<Ui::RpWidget> top) {
+	_top->clear();
+	_top->add(std::move(top), QMargins(0, 0, 0, st::gbFeedCardSkip));
+	resizeToWidth(width());
 }
 
 void PostList::reload() {
@@ -839,10 +1144,12 @@ void PostList::load() {
 		}
 		strong->_loading = false;
 		for (const auto value : r.value(u"posts"_q).toArray()) {
-			strong->_posts->add(object_ptr<PostCard>(
-				strong->_posts,
-				strong->_controller,
-				value.toObject()));
+			strong->_posts->add(
+				object_ptr<PostCard>(
+					strong->_posts,
+					strong->_controller,
+					value.toObject()),
+				QMargins(0, 0, 0, st::gbFeedCardSkip));
 		}
 		const auto next = r.value(u"next_cursor"_q);
 		strong->_cursor = next.isNull()
