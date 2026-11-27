@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_widget.h"
 
 #include "api/api_authorizations.h"
+#include "gb/updates/gb_updates.h" // GB: own updater
 #include "api/api_chat_filters.h"
 #include "apiwrap.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -495,6 +496,10 @@ Widget::Widget(
 			checkUpdateStatus();
 		}, lifetime());
 	}
+	// GB: our own updater shows the same "Update" button.
+	GB::Updates::ReadyValue() | rpl::on_next([=] {
+		checkUpdateStatus();
+	}, lifetime());
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });
@@ -2609,26 +2614,32 @@ QPixmap Widget::grabForFolderSlideAnimation() {
 }
 
 void Widget::checkUpdateStatus() {
-	Expects(!Core::UpdaterDisabled());
-
 	if (_layout == Layout::Child) {
 		return;
 	}
 
 	using Checker = Core::UpdateChecker;
-	if (Checker().state() == Checker::State::Ready) {
+	// GB: our updater (gb/updates) wins; Telegram's is normally disabled.
+	const auto gbReady = GB::Updates::Ready();
+	if (gbReady
+		|| (!Core::UpdaterDisabled()
+			&& Checker().state() == Checker::State::Ready)) {
 		if (_updateTelegram) {
 			return;
 		}
 		_updateTelegram.create(
 			this,
-			tr::lng_update_telegram(tr::now),
+			gbReady ? u"Update GB"_q : tr::lng_update_telegram(tr::now),
 			st::dialogsUpdateButton,
 			st::dialogsInstallUpdate,
 			st::dialogsInstallUpdateOver,
 			true);
 		_updateTelegram->show();
-		_updateTelegram->setClickedCallback([] {
+		_updateTelegram->setClickedCallback([=] {
+			if (gbReady) {
+				GB::Updates::Install();
+				return;
+			}
 			Core::checkReadyUpdate();
 			Core::Restart();
 		});

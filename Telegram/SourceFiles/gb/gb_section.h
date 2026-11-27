@@ -22,6 +22,10 @@ namespace GB::Transfers {
 class Widget;
 } // namespace GB::Transfers
 
+namespace GB::Feed {
+class Widget;
+} // namespace GB::Feed
+
 namespace GB {
 
 // The GB-only main sections. Chats is the regular Telegram chat list, so
@@ -91,6 +95,7 @@ private:
 	object_ptr<Ui::FlatLabel> _about;
 	object_ptr<Downloader::Widget> _downloader = { nullptr };
 	object_ptr<Transfers::Widget> _transfers = { nullptr };
+	object_ptr<Feed::Widget> _feed = { nullptr };
 
 };
 

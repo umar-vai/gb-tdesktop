@@ -79,3 +79,38 @@ gbCaptureBarHeight: 6px;
 gbCaptureDropHeight: 52px;
 gbCaptureButtonSkip: 4px;
 
+// Feed.
+gbFeedMaxWidth: 640px;
+gbFeedPadding: margins(16px, 12px, 16px, 0px);
+gbFeedCardPadding: margins(16px, 12px, 16px, 8px);
+gbFeedHeaderHeight: 44px;
+gbFeedUserpic: 40px;
+gbFeedNameLeft: 52px;
+gbFeedNameTop: 3px;
+gbFeedSubTop: 23px;
+gbFeedSkip: 8px;
+gbFeedFileHeight: 56px;
+gbFeedFileThumb: 48px;
+gbFeedImageMaxHeight: 420px;
+gbFeedBadgeFont: font(11px semibold);
+gbFeedBadgePadding: margins(6px, 2px, 6px, 2px);
+gbFeedText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+}
+gbFeedSub: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+	minWidth: 100px;
+}
+gbFeedName: FlatLabel(defaultFlatLabel) {
+	style: semiboldTextStyle;
+	minWidth: 100px;
+}
+gbFeedTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(semiboldTextStyle) {
+		font: font(16px semibold);
+	}
+	minWidth: 100px;
+}
+gbFeedActionsHeight: 32px;
+gbFeedActionSkip: 20px;
+gbFeedSignInTop: 96px;

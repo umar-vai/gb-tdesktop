@@ -1054,17 +1054,28 @@ PRIVATE
     gb/downloader/gb_dl_tasks.h
     gb/downloader/gb_dl_widget.cpp
     gb/downloader/gb_dl_widget.h
+    gb/feed/gb_feed_api.cpp
+    gb/feed/gb_feed_api.h
+    gb/feed/gb_feed_boxes.cpp
+    gb/feed/gb_feed_boxes.h
+    gb/feed/gb_feed_posts.cpp
+    gb/feed/gb_feed_posts.h
+    gb/feed/gb_feed_widget.cpp
+    gb/feed/gb_feed_widget.h
     gb/gb_section.cpp
     gb/gb_section.h
     gb/gb_sidebar.cpp
     gb/gb_sidebar.h
     gb/gb_strings.h
+    gb/gb_version.h
     gb/transfers/gb_tr_boxes.cpp
     gb/transfers/gb_tr_boxes.h
     gb/transfers/gb_tr_daemon.cpp
     gb/transfers/gb_tr_daemon.h
     gb/transfers/gb_tr_widget.cpp
     gb/transfers/gb_tr_widget.h
+    gb/updates/gb_updates.cpp
+    gb/updates/gb_updates.h
     history/admin_log/history_admin_log_filter.cpp
     history/admin_log/history_admin_log_filter.h
     history/admin_log/history_admin_log_inner.cpp

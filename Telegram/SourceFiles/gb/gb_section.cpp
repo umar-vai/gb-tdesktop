@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "gb/gb_section.h"
 
 #include "gb/downloader/gb_dl_widget.h"
+#include "gb/feed/gb_feed_widget.h"
 #include "gb/transfers/gb_tr_widget.h"
 #include "gb/gb_strings.h"
 #include "ui/widgets/labels.h"
@@ -76,6 +77,10 @@ SectionWidget::SectionWidget(
 		_title->hide();
 		_about->hide();
 		_transfers.create(this, controller);
+	} else if (_section == Section::Feed) {
+		_title->hide();
+		_about->hide();
+		_feed.create(this, controller);
 	}
 	ShownSection() = _section;
 }
@@ -113,6 +118,8 @@ void SectionWidget::doSetInnerFocus() {
 		_downloader->setInnerFocus();
 	} else if (_transfers) {
 		_transfers->setInnerFocus();
+	} else if (_feed) {
+		_feed->setInnerFocus();
 	} else {
 		setFocus();
 	}
@@ -124,6 +131,9 @@ void SectionWidget::resizeEvent(QResizeEvent *e) {
 		return;
 	} else if (_transfers) {
 		_transfers->setGeometry(rect());
+		return;
+	} else if (_feed) {
+		_feed->setGeometry(rect());
 		return;
 	}
 	const auto &padding = st::gbPagePadding;
