@@ -237,8 +237,67 @@ void ShowIncomingBox(
 	}));
 }
 
+void ShowFirewallBox(
+		not_null<Window::SessionController*> controller,
+		Fn<void()> answered) {
+	const auto weak = base::make_weak(controller);
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(u"Allow GB in Windows Firewall"_q));
+		box->setWidth(st::boxWideWidth);
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			u"So that people on the same Wi-Fi can receive files from this "
+				"PC, and so that internet transfers can connect directly "
+				"(fast) instead of through a slow relay, GB's transfer "
+				"engine needs two Windows Firewall rules.\n\nWindows will "
+				"ask for administrator permission: click Yes."_q,
+			st::boxLabel));
+		const auto done = std::make_shared<bool>(false);
+		const auto finish = [=] {
+			if (!*done) {
+				*done = true;
+				Daemon::Instance().setFirewallAsked();
+				if (answered) {
+					answered();
+				}
+			}
+		};
+		const auto allowing = std::make_shared<bool>(false);
+		box->addButton(rpl::single(u"Allow"_q), [=] {
+			*allowing = true;
+			// The engine starts only after the rules are in place.
+			Daemon::Instance().fixFirewall([=](bool ok, QString error) {
+				if (const auto strong = weak.get()) {
+					strong->showToast(ok
+						? u"Windows Firewall now allows GB transfers."_q
+						: (u"Firewall not changed. "_q + error));
+				}
+				finish();
+			});
+			box->closeBox();
+		});
+		box->addButton(rpl::single(u"Not now"_q), [=] {
+			box->closeBox();
+		});
+		box->boxClosing() | rpl::on_next([=] {
+			if (!*allowing) {
+				finish();
+			}
+		}, box->lifetime());
+	}));
+}
+
 void WatchIncoming(not_null<Window::SessionController*> controller) {
-	Daemon::Instance().ensureStarted();
+	if (Daemon::Instance().shouldAskFirewall()) {
+		// Ask before the engine starts listening, so Windows' own
+		// "allow access" popup (whose Cancel creates Block rules) does
+		// not appear next to ours.
+		ShowFirewallBox(controller, [] {
+			Daemon::Instance().ensureStarted();
+		});
+	} else {
+		Daemon::Instance().ensureStarted();
+	}
 	const auto session = &controller->session();
 	if (Watched().contains(session)) {
 		return;

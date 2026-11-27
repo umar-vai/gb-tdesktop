@@ -183,6 +183,8 @@ Settings LoadSettings() {
 	flag("fast_mode", result.fastMode);
 	flag("embed_metadata", result.embedMetadata);
 	flag("embed_thumbnail", result.embedThumbnail);
+	flag("catch_browser_downloads", result.catchBrowserDownloads);
+	flag("confirm_browser_downloads", result.confirmBrowserDownloads);
 	result.subtitles = SubtitlesFromKey(
 		object.value(u"subtitles"_q).toString());
 	text("subtitle_langs", result.subtitleLangs);
@@ -191,6 +193,14 @@ Settings LoadSettings() {
 	text("folder_rules", result.folderRules);
 	text("yt_dlp_path", result.ytDlpPath);
 	text("ffmpeg_path", result.ffmpegPath);
+	const auto dirs = object.value(u"capture_dirs"_q).toObject();
+	for (auto i = dirs.begin(); i != dirs.end(); ++i) {
+		const auto folder = i.value().toString().trimmed();
+		if (!i.key().isEmpty() && !folder.isEmpty()) {
+			result.captureDirs.emplace(i.key(), folder);
+		}
+	}
+	text("capture_last_dir", result.captureLastDir);
 	return result;
 }
 
@@ -207,6 +217,12 @@ void SaveSettings(const Settings &settings) {
 	object.insert(u"fast_mode"_q, settings.fastMode);
 	object.insert(u"embed_metadata"_q, settings.embedMetadata);
 	object.insert(u"embed_thumbnail"_q, settings.embedThumbnail);
+	object.insert(
+		u"catch_browser_downloads"_q,
+		settings.catchBrowserDownloads);
+	object.insert(
+		u"confirm_browser_downloads"_q,
+		settings.confirmBrowserDownloads);
 	object.insert(u"subtitles"_q, SubtitlesKey(settings.subtitles));
 	object.insert(u"subtitle_langs"_q, settings.subtitleLangs);
 	object.insert(u"cookies_file"_q, settings.cookiesFile);
@@ -214,6 +230,12 @@ void SaveSettings(const Settings &settings) {
 	object.insert(u"folder_rules"_q, settings.folderRules);
 	object.insert(u"yt_dlp_path"_q, settings.ytDlpPath);
 	object.insert(u"ffmpeg_path"_q, settings.ffmpegPath);
+	auto dirs = QJsonObject();
+	for (const auto &[key, folder] : settings.captureDirs) {
+		dirs.insert(key, folder);
+	}
+	object.insert(u"capture_dirs"_q, dirs);
+	object.insert(u"capture_last_dir"_q, settings.captureLastDir);
 	auto file = QSaveFile(SettingsFile());
 	if (file.open(QIODevice::WriteOnly)) {
 		file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
@@ -253,6 +275,34 @@ QString ActiveProxyUrl() {
 		}
 	}
 	return WindowsProxy();
+}
+
+QString MissingDrive(const QString &folder) {
+	const auto path = QDir::toNativeSeparators(folder.trimmed());
+	auto root = QString();
+	if (path.size() >= 2 && path[1] == ':' && path[0].isLetter()) {
+		root = path.left(2);
+	} else if (path.startsWith(u"\\\\"_q)) {
+		const auto parts = path.mid(2).split('\\', Qt::SkipEmptyParts);
+		if (parts.size() >= 2) {
+			root = u"\\\\"_q + parts[0] + '\\' + parts[1];
+		}
+	}
+	if (root.isEmpty() || QFileInfo(root + '\\').isDir()) {
+		return QString();
+	}
+	return root.toUpper();
+}
+
+AvailableFolder AvailableFolderFor(const QString &folder) {
+	const auto drive = MissingDrive(folder);
+	if (drive.isEmpty()) {
+		return { .folder = folder };
+	}
+	return {
+		.folder = DefaultDownloadDir(),
+		.note = u"%1 not found - using Downloads"_q.arg(drive),
+	};
 }
 
 Target ResolveTarget(

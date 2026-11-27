@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/call_delayed.h"
 #include "base/random.h"
+#include "gb/downloader/gb_dl_browser.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
@@ -90,6 +91,19 @@ Manager *GlobalManager = nullptr;
 	object.insert(u"added"_q, DateKey(item.added));
 	object.insert(u"started_at"_q, DateKey(item.started));
 	object.insert(u"finished_at"_q, DateKey(item.finished));
+	if (item.fromBrowser) {
+		object.insert(u"from_browser"_q, true);
+	}
+	if (!item.context.headers.empty()) {
+		auto headers = QJsonArray();
+		for (const auto &[name, value] : item.context.headers) {
+			headers.push_back(QJsonArray{ name, value });
+		}
+		object.insert(u"browser_headers"_q, headers);
+	}
+	if (!item.context.cookiesFile.isEmpty()) {
+		object.insert(u"browser_cookies"_q, item.context.cookiesFile);
+	}
 	return object;
 }
 
@@ -126,6 +140,16 @@ Manager *GlobalManager = nullptr;
 	result->added = DateFromKey(object.value(u"added"_q).toString());
 	result->started = DateFromKey(object.value(u"started_at"_q).toString());
 	result->finished = DateFromKey(object.value(u"finished_at"_q).toString());
+	result->fromBrowser = object.value(u"from_browser"_q).toBool();
+	for (const auto &value : object.value(u"browser_headers"_q).toArray()) {
+		const auto pair = value.toArray();
+		const auto name = pair.at(0).toString();
+		if (!name.isEmpty()) {
+			result->context.headers.push_back({ name, pair.at(1).toString() });
+		}
+	}
+	result->context.cookiesFile = object.value(
+		u"browser_cookies"_q).toString();
 	if (!result->added.isValid()) {
 		result->added = result->finished.isValid()
 			? result->finished
@@ -321,9 +345,12 @@ Manager::Manager()
 : _settings(LoadSettings())
 , _saveTimer([=] { save(); }) {
 	load();
+	purgeCookieFiles();
+	_browser = std::make_unique<BrowserServer>(this);
 }
 
 Manager::~Manager() {
+	_browser = nullptr;
 	for (const auto &item : _items) {
 		if (item->task) {
 			item->task->stop(true);
@@ -442,12 +469,19 @@ uint64 Manager::add(AddRequest request) {
 	item->creator = request.creator;
 	item->duration = request.duration;
 	item->fileSize = request.fileSize;
+	item->context = std::move(request.context);
+	item->fromBrowser = request.fromBrowser;
 	item->forceRedownload = request.forceRedownload;
 	item->added = QDateTime::currentDateTimeUtc();
-	item->status = Status::Queued;
+	item->status = request.startPaused ? Status::Paused : Status::Queued;
+	if (request.startPaused) {
+		item->detail = u"Waiting - press resume to start"_q;
+	}
 	const auto id = item->id;
 	_items.push_back(std::move(item));
-	_pending.push_back(id);
+	if (!request.startPaused) {
+		_pending.push_back(id);
+	}
 	notifyList();
 	saveLater();
 	startAvailable();
@@ -581,6 +615,7 @@ void Manager::launch(not_null<Item*> item) {
 		.audioFormat = item->audioFormat,
 		.audioBitrate = item->audioBitrate,
 		.infoJsonPath = item->infoJsonPath,
+		.context = item->context,
 		.skipExisting = _settings.skipExisting && !item->forceRedownload,
 	};
 	auto callbacks = TaskCallbacks{
@@ -615,7 +650,13 @@ void Manager::launch(not_null<Item*> item) {
 		notifyItem(id);
 		return;
 	}
-	if (item->title.isEmpty()) {
+	// Links from the browser are read first even with a title: the stream's
+	// formats tell which quality to take and whether audio comes apart.
+	const auto analyze = item->title.isEmpty()
+		|| (item->fromBrowser
+			&& !item->analyzed
+			&& item->infoJsonPath.isEmpty());
+	if (analyze) {
 		item->detail = u"Analyzing"_q;
 		notifyItem(id);
 		item->analyzer = std::make_unique<Analyzer>(
@@ -639,13 +680,36 @@ void Manager::launch(not_null<Item*> item) {
 				if (item->status != Status::Running) {
 					return;
 				}
+				item->analyzed = true;
 				if (!result.ok) {
-					taskFinished(id, { .error = result.error });
+					if (item->title.isEmpty()) {
+						taskFinished(id, { .error = result.error });
+					} else {
+						// The browser gave a title: try the download itself.
+						item->status = Status::Queued;
+						launch(item);
+					}
 					return;
 				}
-				item->title = result.plainFile
-					? result.filename
-					: result.title;
+				if (!result.pageUrl.isEmpty()) {
+					// The page only played in the browser: its stream is used.
+					item->pageUrl = result.pageUrl;
+					item->url = result.url;
+					if (result.context.cookiesFile
+						!= item->context.cookiesFile) {
+						removeCookies(item);
+					}
+					item->context = result.context;
+				}
+				const auto keepTitle = item->fromBrowser
+					&& !item->title.isEmpty()
+					&& !IsPlaceholderTitle(item->title)
+					&& !result.plainFile;
+				if (!keepTitle) {
+					item->title = result.plainFile
+						? result.filename
+						: result.title;
+				}
 				item->creator = result.creator;
 				item->duration = result.duration;
 				item->infoJsonPath = result.infoJsonPath;
@@ -654,7 +718,8 @@ void Manager::launch(not_null<Item*> item) {
 				}
 				item->status = Status::Queued;
 				launch(item);
-			}));
+			}),
+			item->context);
 		item->task = nullptr;
 		item->analyzer->start();
 		return;
@@ -690,6 +755,7 @@ void Manager::taskFinished(uint64 id, DownloadResult result) {
 		item->error = QString();
 		item->forceRedownload = false;
 		removeInfo(item);
+		removeCookies(item);
 	} else if (result.cancelled) {
 		if (item->status == Status::Pausing) {
 			item->status = Status::Paused;
@@ -849,6 +915,8 @@ void Manager::redownload(uint64 id) {
 			.platform = item->platform,
 			.creator = item->creator,
 			.duration = item->duration,
+			.context = { .headers = item->context.headers },
+			.fromBrowser = item->fromBrowser,
 			.forceRedownload = true,
 		});
 		return;
@@ -875,6 +943,7 @@ void Manager::remove(uint64 id, bool deleteFile) {
 		QFile::remove(item->resultPath);
 	}
 	removeInfo(item);
+	removeCookies(item);
 	_items.erase(i);
 	notifyList();
 	saveLater();
@@ -931,6 +1000,30 @@ void Manager::removeInfo(not_null<Item*> item) {
 		QFile::remove(item->infoJsonPath);
 	}
 	item->infoJsonPath = QString();
+}
+
+void Manager::removeCookies(not_null<Item*> item) {
+	RemoveCookieFile(item->context.cookiesFile);
+	item->context.cookiesFile = QString();
+}
+
+void Manager::purgeCookieFiles() {
+	// Cookie files belong to unfinished browser downloads only.
+	auto used = QSet<QString>();
+	for (const auto &item : _items) {
+		if (!item->context.cookiesFile.isEmpty()) {
+			used.insert(QFileInfo(item->context.cookiesFile)
+				.absoluteFilePath()
+				.toLower());
+		}
+	}
+	for (const auto &info : QDir(CookieFolder()).entryInfoList(
+			{ u"*.txt"_q },
+			QDir::Files)) {
+		if (!used.contains(info.absoluteFilePath().toLower())) {
+			QFile::remove(info.absoluteFilePath());
+		}
+	}
 }
 
 void Manager::notifyItem(uint64 id) {

@@ -1,0 +1,161 @@
+/* GB Downloader - Telegram Desktop look (day / night). */
+:root {
+  --bg: #ffffff;
+  --bg-2: #f1f2f5;
+  --fg: #000000;
+  --sub: #707579;
+  --accent: #3390ec;
+  --accent-hover: #2a7fd4;
+  --accent-soft: rgba(51, 144, 236, .1);
+  --hover: rgba(112, 117, 121, .08);
+  --line: #e7e8ec;
+  --ok: #4fae4e;
+  --bad: #e53935;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17212b;
+    --bg-2: #0e1621;
+    --fg: #f5f5f5;
+    --sub: #708499;
+    --accent: #5eb5f7;
+    --accent-hover: #6ec0ff;
+    --accent-soft: rgba(94, 181, 247, .12);
+    --hover: rgba(255, 255, 255, .05);
+    --line: #0e1621;
+    --ok: #6bc76a;
+    --bad: #ef5350;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 "Segoe UI", "Open Sans", Roboto, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #5eb5f7, #3390ec 60%, #2a7fd4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex: none;
+}
+.logo svg { width: 20px; height: 20px; }
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 14px "Segoe UI", "Open Sans", Roboto, system-ui, sans-serif;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.btn:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.flat {
+  background: transparent;
+  color: var(--accent);
+  height: 36px;
+  font-weight: 600;
+}
+.btn.flat:hover { background: var(--accent-soft); }
+.section-title {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 14px 16px 6px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .1s;
+}
+.row:hover { background: var(--hover); }
+.row[disabled] { opacity: .55; cursor: default; }
+.row[disabled]:hover { background: none; }
+.row .label { white-space: nowrap; }
+.row .detail {
+  color: var(--sub);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row.best .label { font-weight: 600; }
+.divider { height: 8px; background: var(--bg-2); }
+.hint { color: var(--sub); font-size: 13px; }
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sub);
+  display: inline-block;
+  flex: none;
+}
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+/* Telegram-style switch. */
+.switch { position: relative; width: 34px; height: 14px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  background: var(--sub);
+  opacity: .5;
+  transition: background .15s, opacity .15s;
+  cursor: pointer;
+}
+.switch span::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: -3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--sub);
+  box-sizing: border-box;
+  transition: transform .15s, border-color .15s;
+}
+.switch input:checked + span { background: var(--accent); opacity: 1; }
+.switch input:checked + span::before { transform: translateX(18px); border-color: var(--accent); }
+input[type=text], input[type=number], textarea {
+  width: 100%;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font: 14px "Segoe UI", "Open Sans", Roboto, system-ui, sans-serif;
+  padding: 8px 0;
+  outline: none;
+  transition: border-color .15s;
+}
+input[type=text]:focus, input[type=number]:focus, textarea:focus { border-bottom-color: var(--accent); }
+textarea { resize: vertical; min-height: 120px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }

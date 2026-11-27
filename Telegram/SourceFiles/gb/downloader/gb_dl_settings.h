@@ -28,6 +28,8 @@ struct Settings {
 	bool fastMode = true;
 	bool embedMetadata = true;
 	bool embedThumbnail = false;
+	bool catchBrowserDownloads = true;
+	bool confirmBrowserDownloads = true;
 	Subtitles subtitles = Subtitles::Off;
 	QString subtitleLangs = u"en"_q;
 	QString cookiesFile;
@@ -35,7 +37,25 @@ struct Settings {
 	QString folderRules;
 	QString ytDlpPath;
 	QString ffmpegPath;
+
+	// The browser's "New download" window: folders remembered per file
+	// type ("ext:.zip") and per site ("site:www.youtube.com"), and the
+	// folder chosen last.
+	std::map<QString, QString> captureDirs;
+	QString captureLastDir;
 };
+
+// "H:" (or "\\server\share") when a folder lives on a drive that is not
+// there now, else an empty string.
+[[nodiscard]] QString MissingDrive(const QString &folder);
+
+struct AvailableFolder {
+	QString folder;
+	QString note; // "H: not found - using Downloads" when it fell back
+};
+// The folder, or the default download folder while its drive is missing.
+// Settings are left alone, so the folder is used again once the drive is back.
+[[nodiscard]] AvailableFolder AvailableFolderFor(const QString &folder);
 
 [[nodiscard]] QString DataPath();
 [[nodiscard]] QString DefaultDownloadDir();

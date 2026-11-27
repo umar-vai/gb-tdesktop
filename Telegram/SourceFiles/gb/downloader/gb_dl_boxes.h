@@ -6,7 +6,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "gb/downloader/gb_dl_common.h"
+#include "gb/downloader/gb_dl_tasks.h"
 
 namespace Window {
 class SessionController;

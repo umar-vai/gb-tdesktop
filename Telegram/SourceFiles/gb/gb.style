@@ -51,3 +51,31 @@ gbDlBoxAbout: FlatLabel(defaultFlatLabel) {
 	textFg: windowSubTextFg;
 	minWidth: 280px;
 }
+
+// The browser's "New download" window (a separate window, like IDM's).
+gbCaptureWidth: 540px;
+gbCapturePadding: margins(24px, 6px, 24px, 14px);
+gbCaptureSkip: 8px;
+gbCaptureTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(semiboldTextStyle) {
+		font: font(15px semibold);
+	}
+	minWidth: 100px;
+	maxHeight: 44px;
+}
+gbCaptureText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+}
+gbCaptureAbout: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+	minWidth: 100px;
+}
+gbCaptureStatus: FlatLabel(defaultFlatLabel) {
+	textFg: attentionButtonFg;
+	minWidth: 60px;
+	maxHeight: 40px;
+}
+gbCaptureBarHeight: 6px;
+gbCaptureDropHeight: 52px;
+gbCaptureButtonSkip: 4px;
+

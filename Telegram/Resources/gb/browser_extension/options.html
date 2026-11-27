@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GB Downloader settings</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  body { background: var(--bg-2); }
+  main { max-width: 620px; margin: 32px auto; background: var(--bg); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+  header { display: flex; align-items: center; gap: 14px; padding: 20px 20px 16px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .state { display: flex; align-items: center; gap: 6px; color: var(--sub); font-size: 13px; }
+  label.row { cursor: pointer; }
+  .field { padding: 4px 16px 12px; }
+  .about { padding: 8px 16px 14px; }
+  .inline { display: flex; align-items: center; gap: 8px; }
+  .inline input { width: 90px; }
+  .save { display: flex; align-items: center; gap: 12px; padding: 16px; }
+  .save .btn { width: auto; padding: 0 28px; }
+  #saved { color: var(--ok); font-size: 13px; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m6.5 10 5.5 5.5 5.5-5.5"/><path d="M5 20h14"/></svg></span>
+    <div>
+      <h1>GB Downloader</h1>
+      <div class="state"><span id="dot" class="dot"></span><span id="pairstate">Checking the connection to GB…</span></div>
+    </div>
+  </header>
+  <div class="divider"></div>
+
+  <div class="section-title">Download button</div>
+  <label class="row"><span class="label">Show a Download button on videos and audio players</span>
+    <span class="switch"><input type="checkbox" id="overlay"><span></span></span></label>
+  <div class="about hint">The menu lists every quality the player loads; GB downloads it with the page's cookies.</div>
+  <div class="divider"></div>
+
+  <div class="section-title">Browser downloads</div>
+  <label class="row"><span class="label">Download files with GB instead of the browser</span>
+    <span class="switch"><input type="checkbox" id="capture"><span></span></span></label>
+  <div class="field">
+    <div class="hint">File types to catch, separated by spaces. Empty catches every file.</div>
+    <input type="text" id="types" spellcheck="false">
+    <div class="inline hint" style="margin-top:10px">Skip files smaller than <input type="number" id="minsize" min="0"> KB</div>
+    <button id="resettypes" class="btn flat" type="button" style="width:auto;padding:0 12px;margin-top:6px">Restore default types</button>
+  </div>
+  <div class="about hint">With GB closed (or its "Catch the browser's file downloads" option off) the browser downloads as usual.
+    Hold <b>Alt</b> while clicking a link to let the browser keep it.</div>
+  <div class="divider"></div>
+
+  <div class="section-title">Blocked sites</div>
+  <div class="field">
+    <div class="hint">No button and no stream capture on these sites. One per line; <code>example.com</code> also covers its subdomains; lines starting with <code>#</code> are notes.</div>
+    <textarea id="blocked" spellcheck="false" placeholder="# Sites where GB must never run&#10;bank.example.com"></textarea>
+  </div>
+  <div class="divider"></div>
+
+  <div class="save"><button id="save" class="btn">Save</button><span id="saved"></span></div>
+  <div class="about hint" style="padding-top:0">Reload open tabs after saving so the change applies to them.
+    The extension talks only to GB on this computer (127.0.0.1) and pairs with it by itself.</div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

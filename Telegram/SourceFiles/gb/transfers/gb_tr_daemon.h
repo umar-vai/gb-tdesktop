@@ -68,8 +68,19 @@ enum class EngineState : uchar {
 	Failed,
 };
 
+// Windows Firewall rules for p2pd.exe (TCP 38492 for same Wi-Fi, UDP 41642
+// for direct internet paths), checked with "p2pd firewall check".
+enum class FirewallState : uchar {
+	Unknown,
+	Ok,
+	Missing,
+	Fixing,
+};
+
 struct Status {
 	EngineState engine = EngineState::Starting;
+	FirewallState firewall = FirewallState::Unknown;
+	QString firewallProblem;
 	QString engineError;
 	QStringList lanAddrs;
 	QString networkState; // off, connecting, needs_login, running, failed
@@ -110,6 +121,22 @@ public:
 		return _internet;
 	}
 	void setInternetEnabled(bool enabled);
+
+	// A reusable Tailscale auth key ("join key") so a PC joins the test
+	// network without a browser sign-in. Passed to p2pd as TS_AUTHKEY.
+	[[nodiscard]] bool hasJoinKey() const {
+		return !_joinKey.isEmpty();
+	}
+	void setJoinKey(const QString &key);
+
+	// Re-reads the firewall rules (fast, no admin rights needed).
+	FirewallState checkFirewall();
+	// True once per install: the first-run "allow in firewall" question
+	// has not been answered yet and the rules are missing.
+	[[nodiscard]] bool shouldAskFirewall();
+	void setFirewallAsked();
+	// Runs "p2pd firewall add", which shows Windows' admin (UAC) prompt.
+	void fixFirewall(Fn<void(bool ok, QString error)> done);
 
 	void createOffer(
 		const QString &path,
@@ -165,7 +192,9 @@ private:
 	std::vector<PendingRow> _pending;
 	base::flat_map<QString, std::pair<int64, crl::time>> _servedSamples;
 	QStringList _handled;
+	QString _joinKey;
 	bool _internet = false;
+	bool _firewallAsked = false;
 	bool _started = false;
 	bool _polling = false;
 	int _watching = 0;

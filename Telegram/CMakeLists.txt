@@ -1040,6 +1040,10 @@ PRIVATE
     export/view/export_view_top_bar.h
     gb/downloader/gb_dl_boxes.cpp
     gb/downloader/gb_dl_boxes.h
+    gb/downloader/gb_dl_browser.cpp
+    gb/downloader/gb_dl_browser.h
+    gb/downloader/gb_dl_capture.cpp
+    gb/downloader/gb_dl_capture.h
     gb/downloader/gb_dl_common.cpp
     gb/downloader/gb_dl_common.h
     gb/downloader/gb_dl_manager.cpp
@@ -2840,6 +2844,7 @@ PRIVATE
     qrc/telegram/telegram.qrc
     qrc/telegram/sounds.qrc
     qrc/telegram/tgw.qrc
+    qrc/gb/browser_extension.qrc
     winrc/Telegram.rc
     winrc/Telegram.manifest
     langs/lang.strings

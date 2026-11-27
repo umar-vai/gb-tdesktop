@@ -24,11 +24,39 @@ struct Metrics {
 	bool estimate = false;
 };
 
+// What a browser (the GB extension) knows about a link: the headers its
+// player sent and its cookies, which many CDNs require.
+struct BrowserContext {
+	std::vector<std::pair<QString, QString>> headers;
+	QString cookiesFile;
+
+	[[nodiscard]] bool empty() const {
+		return headers.empty() && cookiesFile.isEmpty();
+	}
+	[[nodiscard]] QString header(const QString &name) const;
+};
+
+// A stream the extension saw a page's player load.
+struct BrowserStream {
+	QString url;
+	QString kind;
+	bool master = false;
+	BrowserContext context;
+};
+
+struct BrowserReport {
+	QString title;
+	QString pageUrl;
+	std::vector<BrowserStream> streams;
+};
+
 struct AnalyzeResult {
 	bool ok = false;
 	bool plainFile = false;
 	QString error;
 	QString url;
+	QString pageUrl;
+	BrowserContext context;
 	QString title;
 	QString creator;
 	QString platform;
@@ -50,6 +78,7 @@ struct DownloadRequest {
 	QString audioFormat;
 	QString audioBitrate;
 	QString infoJsonPath;
+	BrowserContext context;
 	bool skipExisting = true;
 };
 
@@ -79,8 +108,13 @@ public:
 		Settings settings,
 		QString url,
 		Fn<void(QString)> status,
-		Fn<void(AnalyzeResult)> done);
+		Fn<void(AnalyzeResult)> done,
+		BrowserContext context = {});
 	~Analyzer();
+
+	// The extension waits on a menu: only the fastest attempts are tried
+	// and the page is never opened in the browser.
+	void setQuick(bool quick);
 
 	void start();
 	void cancel();
@@ -89,9 +123,12 @@ private:
 	struct Attempt {
 		QStringList args;
 		QString url;
+		BrowserContext context;
 	};
 	void runAttempt();
 	void attemptFinished(bool ok, const QByteArray &output);
+	bool resolveInBrowser();
+	void useBrowserReport(BrowserReport report);
 	void probeAsFile();
 	void finish(AnalyzeResult result);
 
@@ -99,11 +136,17 @@ private:
 	const QString _url;
 	const Fn<void(QString)> _status;
 	const Fn<void(AnalyzeResult)> _done;
+	const BrowserContext _context;
 	std::vector<Attempt> _attempts;
 	int _index = 0;
 	QStringList _errors;
 	std::unique_ptr<QProcess> _process;
 	std::unique_ptr<QNetworkAccessManager> _network;
+	BrowserStream _stream;
+	QString _streamTitle;
+	uint64 _resolveId = 0;
+	bool _quick = false;
+	bool _browserTried = false;
 	bool _cancelled = false;
 	bool _finished = false;
 
@@ -222,6 +265,25 @@ void ProbeFile(
 	QNetworkAccessManager *network,
 	const QString &url,
 	Fn<void(std::optional<FileProbe>)> done);
+
+// Netscape cookies.txt for yt-dlp, made from what the browser sent.
+struct BrowserCookie {
+	QString domain;
+	QString name;
+	QString value;
+	QString path;
+	bool hostOnly = false;
+	bool secure = false;
+	bool httpOnly = false;
+	int64 expires = 0;
+};
+[[nodiscard]] QString WriteCookieFile(
+	const std::vector<BrowserCookie> &cookies);
+[[nodiscard]] std::vector<BrowserCookie> CookiesFromHeader(
+	const QString &url,
+	const QString &header);
+[[nodiscard]] QString CookieFolder();
+void RemoveCookieFile(const QString &path);
 
 [[nodiscard]] QString AvailableName(
 	const QString &folder,

@@ -6,7 +6,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "gb/downloader/gb_dl_boxes.h"
 
+#include "core/application.h"
 #include "core/file_utilities.h"
+#include "window/window_controller.h"
+#include "gb/downloader/gb_dl_browser.h"
 #include "gb/downloader/gb_dl_manager.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/confirm_box.h"
@@ -27,7 +30,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QUrl>
 #include <QtGui/QClipboard>
+#include <QtGui/QDesktopServices>
 #include <QtGui/QGuiApplication>
 
 namespace GB::Downloader {
@@ -44,6 +49,10 @@ struct DownloadState {
 	bool folderChosen = false;
 	Ui::InputField *name = nullptr;
 	bool filled = false;
+	bool fromBrowser = false;
+	bool presetAudio = false;
+	QString presetQuality;
+	bool submitted = false;
 };
 
 [[nodiscard]] std::vector<QString> ToVector(const QStringList &list) {
@@ -177,8 +186,11 @@ void AddConfirmed(
 		}));
 		return;
 	}
+	const auto later = request.startPaused;
 	manager.add(std::move(request));
-	controller->showToast(u"Added to downloads."_q);
+	controller->showToast(later
+		? u"Saved in downloads - start it when you like."_q
+		: u"Added to downloads."_q);
 }
 
 void FillDownloadBox(
@@ -202,7 +214,9 @@ void FillDownloadBox(
 		? VideoQualities()
 		: result.qualities;
 	if (!result.plainFile) {
-		state->type = (settings.defaultMode == Mode::Audio) ? 1 : 0;
+		state->type = state->fromBrowser
+			? (state->presetAudio ? 1 : 0)
+			: (settings.defaultMode == Mode::Audio) ? 1 : 0;
 		AddChoice(
 			container,
 			controller,
@@ -210,10 +224,12 @@ void FillDownloadBox(
 			{ u"Video"_q, u"Audio only"_q },
 			&state->type);
 
-		const auto preferred = ResolveTarget(
-			settings,
-			result.url,
-			settings.videoQuality).quality;
+		const auto preferred = !state->presetQuality.isEmpty()
+			? state->presetQuality
+			: ResolveTarget(
+				settings,
+				result.url,
+				settings.videoQuality).quality;
 		auto qualityIndex = qualities.indexOf(preferred);
 		if (qualityIndex < 0) {
 			const auto wanted = QString(preferred).remove('p').toInt();
@@ -285,7 +301,7 @@ void FillDownloadBox(
 		rpl::single(u"File name"_q),
 		result.plainFile ? result.filename : SafeFilename(result.title)));
 
-	const auto submit = [=] {
+	const auto submit = [=](bool later) {
 		const auto &result = state->result;
 		const auto mode = result.plainFile
 			? Mode::File
@@ -298,7 +314,9 @@ void FillDownloadBox(
 		}
 		auto request = AddRequest{
 			.url = result.url,
-			.pageUrl = result.url,
+			.pageUrl = result.pageUrl.isEmpty()
+				? result.url
+				: result.pageUrl,
 			.title = name,
 			.folder = state->folderChosen ? state->folder.current() : QString(),
 			.mode = mode,
@@ -312,15 +330,27 @@ void FillDownloadBox(
 			.creator = result.creator,
 			.duration = result.duration,
 			.fileSize = result.fileSize,
+			.context = result.context,
+			.fromBrowser = state->fromBrowser,
+			.startPaused = later,
 		};
 		state->result.infoJsonPath = QString();
+		state->result.context.cookiesFile = QString();
+		state->submitted = true;
 		box->closeBox();
 		AddConfirmed(controller, std::move(request));
 	};
-	state->name->submits() | rpl::on_next(submit, state->name->lifetime());
+	state->name->submits() | rpl::on_next([=] {
+		submit(false);
+	}, state->name->lifetime());
 
 	box->clearButtons();
-	box->addButton(rpl::single(u"Download"_q), submit);
+	if (state->fromBrowser) {
+		box->addButton(rpl::single(u"Download now"_q), [=] { submit(false); });
+		box->addButton(rpl::single(u"Later"_q), [=] { submit(true); });
+	} else {
+		box->addButton(rpl::single(u"Download"_q), [=] { submit(false); });
+	}
 	box->addButton(rpl::single(u"Cancel"_q), [=] { box->closeBox(); });
 }
 
@@ -621,6 +651,51 @@ void SettingsBox(
 		container,
 		rpl::single(u"Your browser's cookies are read on this computer by "
 			"the engine and never stored by the app."_q));
+
+	Ui::AddSubsectionTitle(container, rpl::single(u"Browser extension"_q));
+	const auto bridge = BrowserServer::Instance();
+	auto bridgeState = (!bridge || !bridge->running())
+		? u"Not running"_q
+		: bridge->extensionConnected()
+		? u"Connected"_q
+		: u"Waiting for the extension"_q;
+	const auto setup = ::Settings::AddButtonWithLabel(
+		container,
+		rpl::single(u"Set up the GB extension"_q),
+		rpl::single(bridgeState),
+		st::settingsButtonNoIcon);
+	setup->setClickedCallback([=] {
+		auto error = QString();
+		const auto folder = BrowserServer::ExportExtension(&error);
+		if (folder.isEmpty()) {
+			controller->showToast(error);
+			return;
+		}
+		QGuiApplication::clipboard()->setText(
+			QDir::toNativeSeparators(folder));
+		QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+		controller->show(Ui::MakeInformBox({
+			.text = rpl::single(u"The extension folder was opened and its "
+				"path copied.\n\n1. Open chrome://extensions (or "
+				"edge://extensions).\n2. Turn on Developer mode.\n3. Click "
+				"\"Load unpacked\" and choose:\n%1\n\nIt connects to GB by "
+				"itself while GB is running."_q.arg(
+					QDir::toNativeSeparators(folder))),
+			.title = rpl::single(u"GB browser extension"_q),
+		}));
+	});
+	AddToggle(container, u"Ask where to save links from the browser"_q, settings.confirmBrowserDownloads, [=](bool value) {
+		state->settings.confirmBrowserDownloads = value;
+	});
+	AddToggle(container, u"Catch the browser's file downloads"_q, settings.catchBrowserDownloads, [=](bool value) {
+		state->settings.catchBrowserDownloads = value;
+	});
+	Ui::AddDividerText(
+		container,
+		rpl::single(u"The extension adds a Download button on videos on any "
+			"website, lists the qualities the player loads and sends them "
+			"here with the page's cookies. It talks only to GB on this "
+			"computer (127.0.0.1)."_q));
 
 	Ui::AddSubsectionTitle(container, rpl::single(u"Website folders"_q));
 	const auto rules = box->addRow(object_ptr<Ui::InputField>(

@@ -114,6 +114,7 @@ protected:
 
 private:
 	void showMainMenu();
+	void showJoinKeyBox();
 	void updateStatus();
 	void updateEmpty();
 
@@ -123,6 +124,7 @@ private:
 	object_ptr<Ui::IconButton> _menuToggle;
 	object_ptr<Ui::FlatLabel> _status;
 	object_ptr<Ui::LinkButton> _signIn;
+	object_ptr<Ui::LinkButton> _firewall;
 	object_ptr<Ui::SettingsSlider> _tabs;
 	object_ptr<Ui::ScrollArea> _scroll;
 	QPointer<List> _list;

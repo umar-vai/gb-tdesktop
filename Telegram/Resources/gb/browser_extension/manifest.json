@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "GB Downloader",
+  "version": "1.0.0",
+  "description": "Download videos and files from any website with GB: a Download button on every video, every quality the player loads, sent to GB with the page's cookies.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "cookies",
+    "downloads",
+    "storage",
+    "webRequest",
+    "notifications",
+    "declarativeNetRequestWithHostAccess",
+    "webNavigation"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "GB Downloader",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "options_ui": {"page": "options.html", "open_in_tab": true},
+  "commands": {
+    "send-page": {
+      "suggested_key": {"default": "Alt+G"},
+      "description": "Send this page to GB"
+    }
+  }
+}

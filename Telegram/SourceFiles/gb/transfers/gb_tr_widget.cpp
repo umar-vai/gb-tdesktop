@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "gb/transfers/gb_tr_daemon.h"
 #include "layout/layout_document_generic_preview.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/layers/generic_box.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/painter.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/discrete_sliders.h"
@@ -513,6 +515,7 @@ Widget::Widget(
 , _menuToggle(this, st::menuToggle)
 , _status(this, QString(), st::gbDlSummary)
 , _signIn(this, u"Sign in to connect"_q)
+, _firewall(this, u"Allow in firewall"_q)
 , _tabs(this, st::defaultTabsSlider)
 , _scroll(this)
 , _empty(this, QString(), st::gbDlEmpty) {
@@ -524,10 +527,18 @@ Widget::Widget(
 	_signIn->setClickedCallback([=] {
 		const auto url = Daemon::Instance().status().loginUrl;
 		if (!url.isEmpty()) {
+			QGuiApplication::clipboard()->setText(url);
 			File::OpenUrl(url);
+			_controller->showToast(u"Sign-in link opened and copied. On a "
+				"friend's PC, send this link to the account owner: they "
+				"open it and click Connect."_q);
 		}
 	});
 	_signIn->hide();
+	_firewall->setClickedCallback([=] {
+		ShowFirewallBox(_controller);
+	});
+	_firewall->hide();
 
 	_tabs->setSections({ u"Receiving"_q, u"Sending"_q });
 	_tabs->setActiveSectionFast(0);
@@ -594,16 +605,73 @@ void Widget::showMainMenu() {
 			.confirmText = rpl::single(u"Turn on"_q),
 		}));
 	}, &st::menuIconSettings);
+	menu->addAction(daemon.hasJoinKey()
+		? u"Change join key..."_q
+		: u"Use a join key..."_q, [=] {
+		showJoinKeyBox();
+	}, &st::menuIconLock);
+	const auto url = daemon.status().loginUrl;
+	if (!url.isEmpty()
+		&& daemon.status().networkState == u"needs_login"_q) {
+		menu->addAction(u"Copy sign-in link"_q, [=] {
+			QGuiApplication::clipboard()->setText(url);
+			controller->showToast(u"Sign-in link copied."_q);
+		}, &st::menuIconCopy);
+	}
+	if (daemon.status().firewall != FirewallState::Ok) {
+		menu->addAction(u"Allow in Windows Firewall"_q, [=] {
+			ShowFirewallBox(controller);
+		}, &st::menuIconPermissions);
+	}
 	menu->addAction(u"Restart transfer engine"_q, [=] {
 		Daemon::Instance().restart();
 	}, &st::menuIconRestore);
 	menu->popup(QCursor::pos());
 }
 
+void Widget::showJoinKeyBox() {
+	const auto controller = _controller;
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(u"Join key"_q));
+		box->setWidth(st::boxWideWidth);
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			u"Test mode: paste a reusable Tailscale auth key "
+				"(tskey-auth-...) from the account owner's admin page "
+				"(Settings, Keys). This PC then joins internet transfers "
+				"without a browser sign-in. Leave empty to use the "
+				"sign-in link instead. Keep the key secret."_q,
+			st::boxLabel));
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(u"tskey-auth-..."_q),
+			QString()));
+		const auto submit = [=] {
+			const auto key = field->getLastText().trimmed();
+			if (!key.isEmpty() && !key.startsWith(u"tskey-"_q)) {
+				field->showError();
+				return;
+			}
+			auto &daemon = Daemon::Instance();
+			daemon.setJoinKey(key);
+			if (!key.isEmpty() && !daemon.internetEnabled()) {
+				daemon.setInternetEnabled(true);
+			}
+			box->closeBox();
+		};
+		field->submits() | rpl::on_next(submit, field->lifetime());
+		box->addButton(rpl::single(u"Save"_q), submit);
+		box->addButton(rpl::single(u"Cancel"_q), [=] { box->closeBox(); });
+		box->setFocusCallback([=] { field->setFocusFast(); });
+	}));
+}
+
 void Widget::updateStatus() {
 	const auto &status = Daemon::Instance().status();
 	auto text = QString();
 	auto signIn = false;
+	auto showFirewall = false;
 	switch (status.engine) {
 	case EngineState::Missing:
 	case EngineState::Failed:
@@ -632,12 +700,21 @@ void Widget::updateStatus() {
 		} else {
 			internet = u"Internet: off"_q;
 		}
-		text = Join({ lan, internet });
+		auto firewall = QString();
+		if (status.firewall == FirewallState::Missing) {
+			firewall = u"Firewall: blocked"_q;
+			showFirewall = true;
+		} else if (status.firewall == FirewallState::Fixing) {
+			firewall = u"Firewall: waiting for permission..."_q;
+		}
+		text = Join({ lan, internet, firewall });
 	} break;
 	}
 	_status->setText(text);
-	if (_signIn->isHidden() == signIn) {
+	if (_signIn->isHidden() == signIn
+		|| _firewall->isHidden() == showFirewall) {
 		_signIn->setVisible(signIn);
+		_firewall->setVisible(showFirewall);
 		resizeEvent(nullptr);
 	}
 }
@@ -675,9 +752,14 @@ void Widget::resizeEvent(QResizeEvent *e) {
 	top += rowHeight + st::gbDlTopSkip;
 
 	auto statusWidth = contentWidth;
-	if (!_signIn->isHidden()) {
-		statusWidth -= _signIn->width() + st::gbDlFieldSkip;
-		_signIn->moveToLeft(left + contentWidth - _signIn->width(), top);
+	auto linksRight = left + contentWidth;
+	for (const auto link : { _signIn.data(), _firewall.data() }) {
+		if (!link->isHidden()) {
+			linksRight -= link->width();
+			link->moveToLeft(linksRight, top);
+			linksRight -= st::gbDlFieldSkip;
+			statusWidth -= link->width() + st::gbDlFieldSkip;
+		}
 	}
 	_status->resizeToWidth(std::max(statusWidth, 0));
 	_status->moveToLeft(left, top);

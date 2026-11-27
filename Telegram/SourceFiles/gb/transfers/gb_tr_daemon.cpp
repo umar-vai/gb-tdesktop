@@ -228,9 +228,19 @@ void Daemon::startProcess() {
 		u"-api"_q, u"127.0.0.1:0"_q,
 	};
 	if (_internet) {
+		// -v logs magicsock/disco details (endpoints, pings, direct or
+		// relay) to p2pd.log, needed to debug paths during testing.
 		args.push_back(u"-tailscale"_q);
+		args.push_back(u"-v"_q);
 	}
+	checkFirewall();
 	_process = new QProcess();
+	if (_internet && !_joinKey.isEmpty()) {
+		// Through the environment, so the key is not in the command line.
+		auto env = QProcessEnvironment::systemEnvironment();
+		env.insert(u"TS_AUTHKEY"_q, _joinKey);
+		_process->setProcessEnvironment(env);
+	}
 	_process->setProcessChannelMode(QProcess::MergedChannels);
 	_process->setStandardOutputFile(data + u"/p2pd.log"_q);
 	const auto process = _process;
@@ -330,6 +340,105 @@ void Daemon::setInternetEnabled(bool enabled) {
 	if (_started) {
 		restart();
 	}
+}
+
+void Daemon::setJoinKey(const QString &key) {
+	const auto trimmed = key.trimmed();
+	if (_joinKey == trimmed) {
+		return;
+	}
+	_joinKey = trimmed;
+	saveSettings();
+	if (_started && _internet) {
+		restart();
+	}
+}
+
+FirewallState Daemon::checkFirewall() {
+	if (_status.firewall == FirewallState::Fixing) {
+		return _status.firewall;
+	}
+	const auto engine = FindEngine();
+	if (engine.isEmpty()) {
+		return _status.firewall;
+	}
+	auto process = QProcess();
+	process.setProcessChannelMode(QProcess::MergedChannels);
+	process.start(engine, { u"firewall"_q, u"check"_q });
+	if (!process.waitForFinished(5000)) {
+		process.kill();
+		process.waitForFinished(1000);
+		_status.firewall = FirewallState::Unknown;
+		return _status.firewall;
+	}
+	const auto object = QJsonDocument::fromJson(
+		process.readAll()).object();
+	auto problems = QStringList();
+	for (const auto value : object.value(u"problems"_q).toArray()) {
+		problems.push_back(value.toString());
+	}
+	if (process.exitStatus() != QProcess::NormalExit) {
+		_status.firewall = FirewallState::Unknown;
+	} else if (process.exitCode() == 0) {
+		_status.firewall = FirewallState::Ok;
+	} else if (process.exitCode() == 3) {
+		_status.firewall = FirewallState::Missing;
+	} else {
+		// An older p2pd without the "firewall" command.
+		_status.firewall = FirewallState::Unknown;
+	}
+	_status.firewallProblem = problems.join(u"; "_q);
+	return _status.firewall;
+}
+
+bool Daemon::shouldAskFirewall() {
+	if (_firewallAsked) {
+		return false;
+	}
+	return (checkFirewall() == FirewallState::Missing);
+}
+
+void Daemon::setFirewallAsked() {
+	if (!_firewallAsked) {
+		_firewallAsked = true;
+		saveSettings();
+	}
+}
+
+void Daemon::fixFirewall(Fn<void(bool ok, QString error)> done) {
+	const auto engine = FindEngine();
+	if (engine.isEmpty() || _status.firewall == FirewallState::Fixing) {
+		if (done) {
+			done(false, engine.isEmpty()
+				? u"p2pd.exe was not found."_q
+				: u"Already asking for permission."_q);
+		}
+		return;
+	}
+	_status.firewall = FirewallState::Fixing;
+	notify();
+	// p2pd asks for admin rights itself (UAC) and waits for its elevated
+	// copy, so this process can take as long as the user needs.
+	const auto process = new QProcess();
+	process->setProcessChannelMode(QProcess::MergedChannels);
+	QObject::connect(
+		process,
+		&QProcess::finished,
+		[=](int code, QProcess::ExitStatus status) {
+			const auto output = QString::fromUtf8(
+				process->readAll()).trimmed();
+			process->deleteLater();
+			_status.firewall = FirewallState::Unknown;
+			const auto state = checkFirewall();
+			const auto ok = (status == QProcess::NormalExit)
+				&& (code == 0)
+				&& (state == FirewallState::Ok);
+			notify();
+			if (done) {
+				done(ok, ok ? QString() : output.section('\n', -1));
+			}
+		});
+	process->start(engine, { u"firewall"_q, u"add"_q });
 }
 
 void Daemon::schedulePoll() {
@@ -602,6 +711,8 @@ void Daemon::loadSettings() {
 	}
 	const auto object = QJsonDocument::fromJson(file.readAll()).object();
 	_internet = object.value(u"internet"_q).toBool();
+	_joinKey = object.value(u"join_key"_q).toString();
+	_firewallAsked = object.value(u"firewall_asked"_q).toBool();
 	for (const auto value : object.value(u"handled"_q).toArray()) {
 		_handled.push_back(value.toString());
 	}
@@ -631,11 +742,15 @@ void Daemon::saveSettings() {
 			{ u"date"_q, double(row.date) },
 		});
 	}
-	const auto object = QJsonObject{
+	auto object = QJsonObject{
 		{ u"internet"_q, _internet },
+		{ u"firewall_asked"_q, _firewallAsked },
 		{ u"handled"_q, handled },
 		{ u"pending"_q, pending },
 	};
+	if (!_joinKey.isEmpty()) {
+		object.insert(u"join_key"_q, _joinKey);
+	}
 	auto file = QFile(SettingsPath());
 	if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
 		file.write(QJsonDocument(object).toJson());

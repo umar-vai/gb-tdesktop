@@ -1,0 +1,16 @@
+<RCC>
+  <qresource prefix="/gb/browser_extension">
+    <file alias="manifest.json">../../gb/browser_extension/manifest.json</file>
+    <file alias="background.js">../../gb/browser_extension/background.js</file>
+    <file alias="content.js">../../gb/browser_extension/content.js</file>
+    <file alias="popup.html">../../gb/browser_extension/popup.html</file>
+    <file alias="popup.js">../../gb/browser_extension/popup.js</file>
+    <file alias="options.html">../../gb/browser_extension/options.html</file>
+    <file alias="options.js">../../gb/browser_extension/options.js</file>
+    <file alias="ui.css">../../gb/browser_extension/ui.css</file>
+    <file alias="icons/icon16.png">../../gb/browser_extension/icons/icon16.png</file>
+    <file alias="icons/icon32.png">../../gb/browser_extension/icons/icon32.png</file>
+    <file alias="icons/icon48.png">../../gb/browser_extension/icons/icon48.png</file>
+    <file alias="icons/icon128.png">../../gb/browser_extension/icons/icon128.png</file>
+  </qresource>
+</RCC>

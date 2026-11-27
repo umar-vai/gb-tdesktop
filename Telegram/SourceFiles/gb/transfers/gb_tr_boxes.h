@@ -40,6 +40,12 @@ void Receive(
 	not_null<Window::SessionController*> controller,
 	const QString &link);
 
+// "Allow GB in Windows Firewall": Allow runs "p2pd firewall add" (UAC).
+// answered() runs once the box is closed either way.
+void ShowFirewallBox(
+	not_null<Window::SessionController*> controller,
+	Fn<void()> answered = nullptr);
+
 // Starts the engine and pops ShowIncomingBox for every new incoming
 // message that carries a gb:// link. Safe to call once per window.
 void WatchIncoming(not_null<Window::SessionController*> controller);

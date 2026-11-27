@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/call_delayed.h"
 #include "base/random.h"
+#include "gb/downloader/gb_dl_browser.h"
 
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
@@ -303,10 +304,16 @@ using AttemptList = std::vector<std::pair<QString, QStringList>>;
 
 [[nodiscard]] QStringList CookieArgs(
 		const Settings &settings,
-		const QStringList &attempt) {
+		const QStringList &attempt,
+		const BrowserContext &context) {
 	if (attempt.contains(u"--cookies-from-browser"_q)
 		|| attempt.contains(u"--cookies"_q)) {
 		return {};
+	}
+	// The browser's own cookies for this very link beat any global choice.
+	if (!context.cookiesFile.isEmpty()
+		&& QFileInfo(context.cookiesFile).isFile()) {
+		return { u"--cookies"_q, context.cookiesFile };
 	}
 	if (!settings.cookiesFile.isEmpty()
 		&& QFileInfo(settings.cookiesFile).isFile()) {
@@ -317,6 +324,71 @@ using AttemptList = std::vector<std::pair<QString, QStringList>>;
 		return { u"--cookies-from-browser"_q, browser };
 	}
 	return {};
+}
+
+[[nodiscard]] QStringList ContextArgs(const BrowserContext &context) {
+	auto result = QStringList();
+	for (const auto &[name, value] : context.headers) {
+		result << u"--add-header"_q << (name + ':' + value);
+	}
+	return result;
+}
+
+// Puts the browser's headers right before the "--" that ends the options,
+// after the attempt's own, so the player's User-Agent and Referer win.
+[[nodiscard]] QStringList WithContext(
+		QStringList args,
+		const BrowserContext &context) {
+	const auto extra = ContextArgs(context);
+	if (extra.isEmpty()) {
+		return args;
+	}
+	const auto dash = args.indexOf(u"--"_q);
+	if (dash < 0) {
+		return args + extra;
+	}
+	for (auto i = 0; i != extra.size(); ++i) {
+		args.insert(dash + i, extra[i]);
+	}
+	return args;
+}
+
+[[nodiscard]] bool DomainMatches(const QString &host, QString domain) {
+	if (domain.startsWith('.')) {
+		domain = domain.mid(1);
+	}
+	domain = domain.toLower();
+	return !domain.isEmpty()
+		&& (host == domain || host.endsWith('.' + domain));
+}
+
+[[nodiscard]] QByteArray CookieHeaderFromFile(
+		const QString &path,
+		const QString &url) {
+	auto file = QFile(path);
+	if (path.isEmpty() || !file.open(QIODevice::ReadOnly)) {
+		return QByteArray();
+	}
+	const auto parsed = QUrl(url);
+	const auto host = parsed.host().toLower();
+	const auto secure = (parsed.scheme().toLower() == u"https"_q);
+	auto result = QStringList();
+	for (const auto &raw : QString::fromUtf8(file.readAll()).split('\n')) {
+		auto line = raw.trimmed();
+		if (line.startsWith(u"#HttpOnly_"_q)) {
+			line = line.mid(10);
+		} else if (line.isEmpty() || line.startsWith('#')) {
+			continue;
+		}
+		const auto parts = line.split('\t');
+		if (parts.size() < 7
+			|| !DomainMatches(host, parts[0])
+			|| (parts[3] == u"TRUE"_q && !secure)) {
+			continue;
+		}
+		result.push_back(parts[5] + '=' + parts[6]);
+	}
+	return result.join(u"; "_q).toUtf8();
 }
 
 [[nodiscard]] QString CacheDir() {
@@ -503,6 +575,109 @@ void KillTree(QProcess *process) {
 
 } // namespace
 
+QString BrowserContext::header(const QString &name) const {
+	for (const auto &[key, value] : headers) {
+		if (key.compare(name, Qt::CaseInsensitive) == 0) {
+			return value;
+		}
+	}
+	return QString();
+}
+
+QString CookieFolder() {
+	const auto result = DataPath() + u"/browser-cookies"_q;
+	QDir().mkpath(result);
+	return result;
+}
+
+QString WriteCookieFile(const std::vector<BrowserCookie> &cookies) {
+	auto lines = QStringList{ u"# Netscape HTTP Cookie File"_q };
+	const auto bad = [](const QString &text) {
+		return text.contains('\r')
+			|| text.contains('\n')
+			|| text.contains('\t');
+	};
+	const auto fallbackExpiry = QDateTime::currentSecsSinceEpoch()
+		+ 7 * 24 * 3600;
+	for (const auto &cookie : cookies) {
+		auto domain = cookie.domain.trimmed();
+		if (domain.isEmpty()
+			|| cookie.name.isEmpty()
+			|| bad(domain)
+			|| bad(cookie.name)
+			|| bad(cookie.value)
+			|| bad(cookie.path)) {
+			continue;
+		}
+		if (!cookie.hostOnly && !domain.startsWith('.')) {
+			domain = '.' + domain;
+		}
+		lines.push_back(QStringList{
+			(cookie.httpOnly ? u"#HttpOnly_"_q : QString()) + domain,
+			cookie.hostOnly ? u"FALSE"_q : u"TRUE"_q,
+			cookie.path.isEmpty() ? u"/"_q : cookie.path,
+			cookie.secure ? u"TRUE"_q : u"FALSE"_q,
+			QString::number((cookie.expires > 0)
+				? cookie.expires
+				: fallbackExpiry),
+			cookie.name,
+			cookie.value,
+		}.join('\t'));
+	}
+	if (lines.size() < 2) {
+		return QString();
+	}
+	const auto path = CookieFolder() + u"/%1.txt"_q.arg(
+		base::RandomValue<uint64>(),
+		16,
+		16,
+		QChar('0'));
+	auto file = QFile(path);
+	if (!file.open(QIODevice::WriteOnly)) {
+		return QString();
+	}
+	file.write((lines.join('\n') + '\n').toUtf8());
+	return QDir::toNativeSeparators(path);
+}
+
+std::vector<BrowserCookie> CookiesFromHeader(
+		const QString &url,
+		const QString &header) {
+	auto result = std::vector<BrowserCookie>();
+	const auto parsed = QUrl(url);
+	const auto host = parsed.host().toLower();
+	if (host.isEmpty()) {
+		return result;
+	}
+	for (const auto &pair : header.split(';', Qt::SkipEmptyParts)) {
+		const auto equal = pair.indexOf('=');
+		if (equal <= 0) {
+			continue;
+		}
+		result.push_back({
+			.domain = host,
+			.name = pair.left(equal).trimmed(),
+			.value = pair.mid(equal + 1).trimmed(),
+			.path = u"/"_q,
+			.hostOnly = true,
+			.secure = (parsed.scheme().toLower() == u"https"_q),
+		});
+	}
+	return result;
+}
+
+void RemoveCookieFile(const QString &path) {
+	if (path.isEmpty()) {
+		return;
+	}
+	const auto folder = QFileInfo(CookieFolder()).absoluteFilePath();
+	if (QFileInfo(path).absolutePath().compare(
+			folder,
+			Qt::CaseInsensitive) == 0) {
+		QFile::remove(path);
+	}
+}
+
 QString AvailableName(
 		const QString &folder,
 		const QString &requested,
@@ -595,15 +770,21 @@ Analyzer::Analyzer(
 	Settings settings,
 	QString url,
 	Fn<void(QString)> status,
-	Fn<void(AnalyzeResult)> done)
+	Fn<void(AnalyzeResult)> done,
+	BrowserContext context)
 : _settings(std::move(settings))
 , _url(url.trimmed())
 , _status(std::move(status))
-, _done(std::move(done)) {
+, _done(std::move(done))
+, _context(std::move(context)) {
 }
 
 Analyzer::~Analyzer() {
 	cancel();
+}
+
+void Analyzer::setQuick(bool quick) {
+	_quick = quick;
 }
 
 void Analyzer::start() {
@@ -621,16 +802,27 @@ void Analyzer::start() {
 		return;
 	}
 	for (const auto &[url, args] : ExtractionAttempts(_url)) {
-		_attempts.push_back({ args, url });
+		if (_quick && _attempts.size() >= 3) {
+			break;
+		}
+		_attempts.push_back({ args, url, _context });
 	}
-	for (const auto &[url, args] : BrowserSessionAttempts(_url)) {
-		_attempts.push_back({ args, url });
+	if (!_quick) {
+		for (const auto &[url, args] : BrowserSessionAttempts(_url)) {
+			_attempts.push_back({ args, url, _context });
+		}
 	}
 	runAttempt();
 }
 
 void Analyzer::cancel() {
 	_cancelled = true;
+	if (_resolveId) {
+		if (const auto bridge = BrowserServer::Instance()) {
+			bridge->cancelResolve(_resolveId);
+		}
+		_resolveId = 0;
+	}
 	if (_process) {
 		KillTree(_process.get());
 		_process->waitForFinished(500);
@@ -643,7 +835,9 @@ void Analyzer::runAttempt() {
 	if (_cancelled) {
 		return;
 	} else if (_index >= int(_attempts.size())) {
-		probeAsFile();
+		if (!resolveInBrowser()) {
+			probeAsFile();
+		}
 		return;
 	}
 	const auto &attempt = _attempts[_index];
@@ -665,7 +859,8 @@ void Analyzer::runAttempt() {
 		CacheDir(),
 	};
 	args += attempt.args;
-	args += CookieArgs(_settings, attempt.args);
+	args += CookieArgs(_settings, attempt.args, attempt.context);
+	args += ContextArgs(attempt.context);
 	args += u"--"_q;
 	args += attempt.url;
 
@@ -734,10 +929,20 @@ void Analyzer::attemptFinished(bool ok, const QByteArray &output) {
 		return;
 	}
 	const auto info = document.object();
+	const auto &attempt = _attempts[_index];
+	const auto fromBrowser = !_stream.url.isEmpty()
+		&& (attempt.url == _stream.url);
 	auto result = AnalyzeResult();
 	result.ok = true;
-	result.url = _url;
+	result.url = fromBrowser ? attempt.url : _url;
+	result.pageUrl = fromBrowser ? _url : QString();
+	result.context = attempt.context;
 	result.title = info.value(u"title"_q).toString();
+	if (fromBrowser
+		&& !_streamTitle.isEmpty()
+		&& (result.title.isEmpty() || IsPlaceholderTitle(result.title))) {
+		result.title = _streamTitle;
+	}
 	if (result.title.isEmpty()) {
 		result.title = info.value(u"description"_q).toString().left(150);
 	}
@@ -782,6 +987,70 @@ void Analyzer::attemptFinished(bool ok, const QByteArray &output) {
 		}
 	}
 	finish(std::move(result));
+}
+
+bool Analyzer::resolveInBrowser() {
+	const auto bridge = BrowserServer::Instance();
+	if (_quick
+		|| _browserTried
+		|| !bridge
+		|| !bridge->extensionConnected()
+		|| IsDirectStream(_url)
+		|| FindYtDlp(_settings).isEmpty()) {
+		return false;
+	}
+	_browserTried = true;
+	if (_status) {
+		_status(u"Opening the page in your browser to find the stream"_q);
+	}
+	const auto guard = base::make_weak(this);
+	_resolveId = bridge->resolve(_url, [=](BrowserReport report) {
+		if (!guard || _cancelled) {
+			return;
+		}
+		_resolveId = 0;
+		useBrowserReport(std::move(report));
+	});
+	return (_resolveId != 0);
+}
+
+void Analyzer::useBrowserReport(BrowserReport report) {
+	const auto rank = [](const BrowserStream &stream) {
+		return (stream.kind == u"hls"_q && stream.master)
+			? 0
+			: (stream.kind == u"hls"_q || stream.kind == u"dash"_q)
+			? 1
+			: 2;
+	};
+	auto chosen = (const BrowserStream*)nullptr;
+	for (const auto &stream : report.streams) {
+		if (IsValidWebUrl(stream.url)
+			&& (!chosen || rank(stream) < rank(*chosen))) {
+			chosen = &stream;
+		}
+	}
+	if (!chosen) {
+		_errors.push_back(u"Browser: the page's player loaded no stream"_q);
+		probeAsFile();
+		return;
+	}
+	_stream = *chosen;
+	_streamTitle = report.title.simplified().left(180);
+	_attempts.push_back({
+		BaseArgs() + Generic(),
+		_stream.url,
+		_stream.context,
+	});
+	_attempts.push_back({
+		LegacyArgs() + Generic(),
+		_stream.url,
+		_stream.context,
+	});
+	_index = int(_attempts.size()) - 2;
+	if (_status) {
+		_status(u"Reading stream qualities"_q);
+	}
+	runAttempt();
 }
 
 void Analyzer::probeAsFile() {
@@ -1099,8 +1368,8 @@ void YtDlpTask::runAttempt() {
 	_errorBuffer.clear();
 
 	auto args = commonArgs();
-	args += CookieArgs(_settings, _attempts[_index]);
-	args += _attempts[_index];
+	args += CookieArgs(_settings, _attempts[_index], _request.context);
+	args += WithContext(_attempts[_index], _request.context);
 
 	_process = std::make_unique<QProcess>();
 	const auto process = _process.get();
@@ -1601,7 +1870,23 @@ void HttpTask::request(int64 offset) {
 	_headersChecked = false;
 	_restarting = false;
 	_window.clear();
-	_reply = _network->get(MakeRequest(_request.url, _request.pageUrl, offset));
+	const auto referer = _request.context.header(u"Referer"_q);
+	auto request = MakeRequest(
+		_request.url,
+		referer.isEmpty() ? _request.pageUrl : referer,
+		offset);
+	for (const auto &[name, value] : _request.context.headers) {
+		if (name.compare(u"Referer"_q, Qt::CaseInsensitive) != 0) {
+			request.setRawHeader(name.toUtf8(), value.toUtf8());
+		}
+	}
+	const auto cookie = CookieHeaderFromFile(
+		_request.context.cookiesFile,
+		_request.url);
+	if (!cookie.isEmpty()) {
+		request.setRawHeader("Cookie", cookie);
+	}
+	_reply = _network->get(request);
 	const auto reply = _reply;
 	QObject::connect(reply, &QNetworkReply::metaDataChanged, [=] {
 		if (_reply == reply) {

@@ -12,6 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace GB::Downloader {
 
+class BrowserServer;
+
 enum class Status : uchar {
 	Queued,
 	Running,
@@ -70,6 +72,9 @@ struct Item {
 	int autoAttempts = 0;
 	int64 duration = 0;
 	int64 fileSize = 0;
+	BrowserContext context;
+	bool fromBrowser = false;
+	bool analyzed = false;
 	bool forceRedownload = false;
 	bool waitingRetry = false;
 	QDateTime added;
@@ -93,6 +98,9 @@ struct AddRequest {
 	QString creator;
 	int64 duration = 0;
 	int64 fileSize = 0;
+	BrowserContext context;
+	bool fromBrowser = false;
+	bool startPaused = false;
 	bool forceRedownload = false;
 };
 
@@ -167,6 +175,8 @@ private:
 	[[nodiscard]] int effectiveConcurrency() const;
 	[[nodiscard]] int outstanding() const;
 	void removeInfo(not_null<Item*> item);
+	void removeCookies(not_null<Item*> item);
+	void purgeCookieFiles();
 
 	Settings _settings;
 	std::vector<std::unique_ptr<Item>> _items;
@@ -176,6 +186,7 @@ private:
 	base::Timer _saveTimer;
 	rpl::event_stream<> _listChanges;
 	rpl::event_stream<uint64> _itemUpdates;
+	std::unique_ptr<BrowserServer> _browser;
 
 };
 
