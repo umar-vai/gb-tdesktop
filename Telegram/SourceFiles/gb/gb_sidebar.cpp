@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "gb/gb_section.h"
 #include "gb/gb_strings.h"
+#include "gb/transfers/gb_tr_boxes.h"
 #include "ui/filter_icons.h"
 #include "ui/widgets/side_bar_button.h"
 #include "ui/wrap/vertical_layout.h"
@@ -55,6 +56,8 @@ not_null<Ui::VerticalLayout*> SetupSidebarSections(
 			button->setActive(shown == section);
 		}, button->lifetime());
 	}
+	Transfers::WatchIncoming(controller);
+
 	layout->show();
 	return layout;
 }

@@ -1055,6 +1055,12 @@ PRIVATE
     gb/gb_sidebar.cpp
     gb/gb_sidebar.h
     gb/gb_strings.h
+    gb/transfers/gb_tr_boxes.cpp
+    gb/transfers/gb_tr_boxes.h
+    gb/transfers/gb_tr_daemon.cpp
+    gb/transfers/gb_tr_daemon.h
+    gb/transfers/gb_tr_widget.cpp
+    gb/transfers/gb_tr_widget.h
     history/admin_log/history_admin_log_filter.cpp
     history/admin_log/history_admin_log_filter.h
     history/admin_log/history_admin_log_inner.cpp
@@ -2864,6 +2870,9 @@ if (WIN32)
     # COMMENT
     #     $<IF:${release},"Appending compatibility manifest.","Finalizing build.">
     # )
+
+    # GB: gb/transfers pulls in Qt Network's DNS object, which needs dnsapi.
+    target_link_libraries(Telegram PRIVATE dnsapi)
 
     if (DESKTOP_APP_WIN7_BASELINE)
         target_link_libraries(Telegram PRIVATE desktop-app::win_directx_helper)
